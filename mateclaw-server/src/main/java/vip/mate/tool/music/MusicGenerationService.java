@@ -118,6 +118,16 @@ public class MusicGenerationService {
                 return;
             }
 
+            // Conversation may have been deleted while the upstream provider was
+            // blocking (~120s). Persisting now would recreate the attachment
+            // directory we just wiped and INSERT a mate_message row pointing at
+            // a non-existent conversation. Drop the result silently.
+            if (asyncTaskService.isConversationCanceled(conversationId)) {
+                log.info("[Music] Task {} succeeded but conversation {} was deleted, dropping result",
+                        task.getTaskId(), conversationId);
+                return;
+            }
+
             String audioUrl = persistAudio(conversationId, task.getTaskId(), result);
 
             saveAssistantMessage(conversationId, audioUrl, result);

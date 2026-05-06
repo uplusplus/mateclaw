@@ -161,6 +161,15 @@ public class VideoGenerationService {
                     return;
                 }
 
+                // Conversation deletion can race with the final poll iteration;
+                // dropping the result avoids resurrecting attachment files and
+                // a dangling mate_message row.
+                if (asyncTaskService.isConversationCanceled(task.getConversationId())) {
+                    log.info("[VideoGen] Task {} succeeded but conversation {} was deleted, dropping result",
+                            task.getTaskId(), task.getConversationId());
+                    return;
+                }
+
                 // 下载视频到本地
                 Path localPath = fileDownloader.download(videoUrl, task.getConversationId(), task.getTaskId());
                 String servingUrl = fileDownloader.toServingUrl(task.getConversationId(), localPath);
