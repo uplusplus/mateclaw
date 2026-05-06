@@ -221,6 +221,16 @@ public class ImageGenerationService {
      * 异步任务完成时的回写逻辑：下载图片 → 保存消息 → 广播 SSE
      */
     private void handleAsyncCompletion(AsyncTaskEntity task, TaskPollResult result) {
+        // The conversation may have been deleted while the poller was running.
+        // Gate every post-completion side effect — file write, message save,
+        // success/failure broadcast — so we never write to a tombstoned
+        // conversation regardless of which sub-branch we'd take.
+        if (asyncTaskService.isConversationCanceled(task.getConversationId())) {
+            log.info("[ImageGen] Task {} (success={}) aborted: conversation {} was deleted",
+                    task.getTaskId(), result.succeeded(), task.getConversationId());
+            return;
+        }
+
         if (result.succeeded()) {
             try {
                 String imageUrl = result.imageUrl();
@@ -228,15 +238,6 @@ public class ImageGenerationService {
                     log.warn("[ImageGen] Task {} succeeded but no image URL", task.getTaskId());
                     asyncTaskService.broadcastTaskEvent(task, "async_task_completed",
                             false, null, null, "图片生成成功但未返回图片 URL");
-                    return;
-                }
-
-                // Conversation deletion can race with the final poll iteration;
-                // dropping the result avoids resurrecting attachment files and
-                // a dangling mate_message row.
-                if (asyncTaskService.isConversationCanceled(task.getConversationId())) {
-                    log.info("[ImageGen] Task {} succeeded but conversation {} was deleted, dropping result",
-                            task.getTaskId(), task.getConversationId());
                     return;
                 }
 
@@ -262,6 +263,11 @@ public class ImageGenerationService {
             } catch (Exception e) {
                 log.error("[ImageGen] Completion handling failed for task {}: {}",
                         task.getTaskId(), e.getMessage(), e);
+                if (asyncTaskService.isConversationCanceled(task.getConversationId())) {
+                    log.info("[ImageGen] Skipping failure broadcast for deleted conversation {}",
+                            task.getConversationId());
+                    return;
+                }
                 asyncTaskService.broadcastTaskEvent(task, "async_task_completed",
                         false, null, null, "图片下载或保存失败: " + e.getMessage());
             }
