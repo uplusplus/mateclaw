@@ -531,6 +531,7 @@ export default {
         zhipu: '智谱 AI 默认使用 https://open.bigmodel.cn/api/paas/v4',
         zhipuIntl: '智谱 AI 国际版使用 https://open.z.ai/api/paas/v4',
         volcengine: '火山引擎（豆包）默认使用 https://ark.cn-beijing.volces.com/api/v3，需要在火山方舟平台创建接入点',
+        xiaomiMimo: '小米 MiMo 默认使用 https://api.xiaomimimo.com/v1，OpenAI 兼容协议，API Key 在 platform.xiaomimimo.com 申请',
         openaiCompatible: '兼容 OpenAI 协议的服务通常使用 /v1 结尾的 Base URL',
       },
       discovery: {

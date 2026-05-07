@@ -100,6 +100,9 @@ export function useProviderList() {
     'volcengine': '/icons/providers/volcengine.svg',
     // volcengine-plan = "Volcano Engine Coding Plan" — same brand, reuse mark.
     'volcengine-plan': '/icons/providers/volcengine.svg',
+    'xiaomi-mimo': '/icons/providers/xiaomimimo.svg',
+    'hunyuan-3d': '/icons/providers/hunyuan-color.svg',
+    'opencode': '/icons/providers/opencode.svg',
     'siliconflow-cn': '/icons/providers/siliconcloud.svg',
     'siliconflow-intl': '/icons/providers/siliconcloud.svg',
     'openai-chatgpt': '/icons/providers/openai.svg',

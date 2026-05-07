@@ -645,6 +645,7 @@ export default {
         zhipu: 'Zhipu AI defaults to https://open.bigmodel.cn/api/paas/v4',
         zhipuIntl: 'Zhipu AI International uses https://open.z.ai/api/paas/v4',
         volcengine: 'Volcano Engine (Doubao) defaults to https://ark.cn-beijing.volces.com/api/v3, requires an endpoint created on the Volcengine Ark platform',
+        xiaomiMimo: 'Xiaomi MiMo defaults to https://api.xiaomimimo.com/v1 (OpenAI-compatible). API keys are issued at platform.xiaomimimo.com',
         openaiCompatible: 'OpenAI-compatible services usually use a Base URL ending with /v1',
       },
       discovery: {
