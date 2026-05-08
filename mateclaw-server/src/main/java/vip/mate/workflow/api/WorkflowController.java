@@ -94,12 +94,26 @@ public class WorkflowController {
         if (row == null) {
             return ResponseEntity.badRequest().body(R.fail("workflow not found: " + id));
         }
-        if (row.getDraftJson() == null) {
+        // The parser throws WorkflowParseException for null/blank/whitespace
+        // input, which would otherwise bubble up to the global handler as a
+        // 500. A blank draft is a normal user state ("just created, nothing
+        // typed yet"), so we surface a friendly 400 here.
+        if (row.getDraftJson() == null || row.getDraftJson().trim().isEmpty()) {
             return ResponseEntity.badRequest()
                     .body(R.fail("workflow has no draft to compile: " + id));
         }
-        WorkflowCompiler.Result result = compiler.compile(row.getDraftJson(),
-                new PublishContext(0L, row.getWorkspaceId()), aclPort);
+        WorkflowCompiler.Result result;
+        try {
+            result = compiler.compile(row.getDraftJson(),
+                    new PublishContext(0L, row.getWorkspaceId()), aclPort);
+        } catch (vip.mate.workflow.compiler.WorkflowParseException e) {
+            // Malformed JSON / structurally invalid graph → render as a
+            // single-error compile failure so the UI's existing errors
+            // panel handles it without a stack trace dialog.
+            return ResponseEntity.unprocessableEntity().body(buildCompileFailure(List.of(
+                    new vip.mate.workflow.compiler.CompileError(
+                            "graph.parse_failed", "/", e.getMessage()))));
+        }
         if (!result.ok()) {
             return ResponseEntity.unprocessableEntity()
                     .body(buildCompileFailure(result.errors()));
@@ -119,6 +133,12 @@ public class WorkflowController {
             return ResponseEntity.ok(R.ok(outcome));
         } catch (WorkflowCompileFailedException e) {
             return ResponseEntity.unprocessableEntity().body(buildCompileFailure(e.errors()));
+        } catch (vip.mate.workflow.compiler.WorkflowParseException e) {
+            // Same surface as a compile error so the UI errors panel
+            // handles a malformed / blank draft without a 500 dialog.
+            return ResponseEntity.unprocessableEntity().body(buildCompileFailure(List.of(
+                    new vip.mate.workflow.compiler.CompileError(
+                            "graph.parse_failed", "/", e.getMessage()))));
         } catch (IllegalArgumentException | IllegalStateException e) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(R.fail(e.getMessage()));
         }

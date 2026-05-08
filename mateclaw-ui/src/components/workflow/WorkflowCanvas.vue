@@ -27,12 +27,27 @@
       </div>
     </div>
 
-    <div v-if="!graph.nodes.length && !graph.parseError" class="canvas-empty">
-      {{ t('workflows.canvas.empty') }}
+    <div v-if="graph.parseError" class="canvas-error">
+      <div class="canvas-error-icon">⚠</div>
+      <div class="canvas-error-msg">{{ t('workflows.canvas.parseError', { msg: graph.parseError }) }}</div>
+    </div>
+
+    <div v-else-if="!graph.nodes.length" class="canvas-empty">
+      <div class="canvas-empty-illustration">
+        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+          <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+          <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+          <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+          <path d="M10 6.5h4"/>
+          <path d="M10 17.5h4"/>
+        </svg>
+      </div>
+      <div class="canvas-empty-text">{{ t('workflows.canvas.empty') }}</div>
     </div>
 
     <VueFlow
-      v-else-if="!graph.parseError"
+      v-else
       :id="canvasId"
       class="canvas-flow"
       :nodes="graph.nodes"
@@ -235,11 +250,46 @@ onBeforeUnmount(() => {
 .canvas-empty {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 12px;
   font-size: 13px;
-  opacity: 0.7;
-  padding: 24px;
+  padding: 32px 24px;
+  color: var(--mc-text-secondary, #666);
+  background: var(--mc-bg-sunken, transparent);
+  min-height: 280px;
+}
+.canvas-empty-illustration {
+  color: var(--mc-text-tertiary, #999);
+  opacity: 0.85;
+}
+.canvas-empty-text {
+  text-align: center;
+  max-width: 320px;
+  line-height: 1.5;
+}
+.canvas-error {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px 24px;
+  background: var(--mc-danger-bg, rgba(255, 80, 80, 0.08));
+  color: var(--mc-danger, #c0392b);
+  min-height: 280px;
+}
+.canvas-error-icon {
+  font-size: 36px;
+}
+.canvas-error-msg {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 12px;
+  text-align: center;
+  max-width: 480px;
+  word-break: break-word;
 }
 .canvas-flow {
   flex: 1;

@@ -5,7 +5,6 @@ import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
@@ -56,6 +55,10 @@ public class WorkflowEntity {
     @TableField(fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updateTime;
 
-    @TableLogic
+    // The `deleted` column stays on the table for schema compatibility but
+    // is no longer logical-deleted — see contributing.md, the project moved
+    // to hard-delete project-wide. deleteById() now performs a real DELETE,
+    // and the unique key on (workspace_id, name, deleted) no longer collides
+    // when a name is recreated and re-deleted.
     private Integer deleted;
 }

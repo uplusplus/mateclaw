@@ -384,7 +384,30 @@ async function onCreateSubmit(payload: { name: string; description: string }) {
     const created = res.data as unknown as WorkflowSummary
     createDialogOpen.value = false
     await reload()
-    if (created?.id) await select(created.id)
+    if (created?.id) {
+      await select(created.id)
+      // Seed a starter step so the canvas renders something the user
+      // can immediately edit, instead of opening on a blank slate.
+      // The compile button also has something real to validate.
+      if (!draftJson.value || !draftJson.value.trim()) {
+        draftJson.value = JSON.stringify({
+          steps: [
+            {
+              name: 'first-step',
+              agentName: 'agent-name',
+              mode: { type: 'sequential' },
+              promptTemplate: 'Hello {{ inputs.payload }}',
+            },
+          ],
+        }, null, 2)
+        try {
+          await workflowApi.saveDraft(created.id, draftJson.value)
+        } catch (e) {
+          // Non-fatal: the user can still hit Save Draft manually.
+          console.warn('seed draft save failed', e)
+        }
+      }
+    }
   } catch (e) {
     setStatus(t('workflows.status.createFailed', { msg: (e as Error).message }), 'err')
   } finally {
@@ -838,10 +861,21 @@ button:disabled {
 }
 .canvas-pane {
   flex: 1;
-  display: grid;
-  grid-template-columns: 1fr 240px;
+  display: flex;
+  flex-direction: row;
   gap: 12px;
-  min-height: 360px;
+  min-height: 420px;
+  align-items: stretch;
+}
+.canvas-pane > .workflow-canvas {
+  /* fill available width when no inspector is visible — earlier the
+     pane reserved 240px for an inspector via grid-template-columns
+     even when it was v-if hidden, leaving the canvas confined. */
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.canvas-pane > .canvas-inspector {
+  flex: 0 0 240px;
 }
 .canvas-inspector {
   background: var(--mc-bg-elevated, rgba(0, 0, 0, 0.02));
