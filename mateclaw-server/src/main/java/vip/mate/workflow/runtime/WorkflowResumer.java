@@ -105,6 +105,12 @@ public class WorkflowResumer {
             runRow.setErrorMessage("paused step '" + stepRow.getStepName() + "' " + outcome.token());
             runRow.setCompletedAt(LocalDateTime.now());
             runMapper.updateById(runRow);
+            // Publish the workflow_completion event downstream — same as the
+            // runner's finishFailed path. Without this, runs that end on a
+            // rejected / timed-out approval would never fire their
+            // completion trigger because the resumer skips
+            // runner.continueFromIndex on the failure branch.
+            runner.publishCompletionEvent(runRow, STATE_FAILED, null, runRow.getErrorMessage());
             return Outcome.failed(runRow.getId(), runRow.getErrorMessage());
         }
 

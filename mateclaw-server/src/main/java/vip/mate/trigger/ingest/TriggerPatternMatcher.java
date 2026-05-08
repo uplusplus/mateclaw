@@ -140,8 +140,17 @@ public class TriggerPatternMatcher {
         }
         String wantState = textOrNull(pattern, "stateFilter");
         if (wantState != null && !"any".equalsIgnoreCase(wantState)) {
-            Object state = data.get("state");
-            if (!(state instanceof String s) || !wantState.equalsIgnoreCase(s)) return false;
+            Object stateObj = data.get("state");
+            if (!(stateObj instanceof String actualState)) return false;
+            // The runtime emits "succeeded" / "failed"; pattern authors
+            // commonly type "completed" to mean "non-failed terminal".
+            // Treat the two as equivalent so authors don't have to care
+            // which vocabulary the runner happens to use today.
+            if ("completed".equalsIgnoreCase(wantState)) {
+                if (!"succeeded".equalsIgnoreCase(actualState)) return false;
+            } else if (!wantState.equalsIgnoreCase(actualState)) {
+                return false;
+            }
         }
         return true;
     }

@@ -1,6 +1,8 @@
 package vip.mate.workflow.runtime;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import vip.mate.workflow.compiler.ir.StepMode;
 import vip.mate.workflow.compiler.ir.WorkflowGraph;
@@ -26,11 +28,20 @@ import java.util.concurrent.TimeUnit;
  * marks the row {@code failed}. The last non-skipped step's output payload
  * is recorded as {@code final_output_ref} on success.
  *
- * <p>StateGraph is intentionally not used here — the four base modes
- * (sequential / fan_out / collect / conditional) are linear plus one bounded
- * parallel section, which a small executor handles more directly. When
- * {@code await_approval} lands the runtime will switch to a graph-backed
- * scheduler so pause / resume can survive a JVM restart.
+ * <p><b>v0 runtime decision:</b> StateGraph is intentionally not used here.
+ * The seven v0 modes (sequential / fan_out / collect / conditional +
+ * await_approval / dispatch_channel / write_memory) are linear plus one
+ * bounded parallel section, which this small executor handles more
+ * directly than wrapping a graph DSL. {@code await_approval} pause / resume
+ * is implemented via {@link WorkflowResumer} reading the persisted
+ * {@code mate_workflow_run_pause} row, so a JVM restart still recovers the
+ * run. v1 will reassess whether to graduate to a graph-backed scheduler
+ * once {@code loop} / {@code invoke_skill} land — until then, "linear
+ * executor" is the explicit, supported runtime.
+ *
+ * <p>StateGraph remains in use elsewhere for agent-internal control flow
+ * (ReAct / Plan-Execute) — that's the runtime owned by
+ * {@link vip.mate.agent agent module}, not this workflow module.
  */
 @Slf4j
 @Service
@@ -49,6 +60,10 @@ public class WorkflowRunner {
     private final WorkflowRunStepMapper stepMapper;
     private final StepAdapterRegistry adapters;
     private final PayloadStore payloadStore;
+    /** Optional — wired in production, may be null in narrow test contexts.
+     *  Spring's stock publisher is always available in a full context. */
+    @Autowired(required = false)
+    private ApplicationEventPublisher events;
 
     public WorkflowRunner(WorkflowRunMapper runMapper,
                           WorkflowRunStepMapper stepMapper,
@@ -241,6 +256,7 @@ public class WorkflowRunner {
         runRow.setFinalOutputRef(finalOutputRef);
         runRow.setCompletedAt(LocalDateTime.now());
         runMapper.updateById(runRow);
+        publishCompletionEvent(runRow, STATE_SUCCEEDED, finalOutputRef, null);
         return new WorkflowRunResult(runRow.getId(), STATE_SUCCEEDED, finalOutputRef, null);
     }
 
@@ -249,7 +265,42 @@ public class WorkflowRunner {
         runRow.setErrorMessage(errorMessage);
         runRow.setCompletedAt(LocalDateTime.now());
         runMapper.updateById(runRow);
+        publishCompletionEvent(runRow, STATE_FAILED, null, errorMessage);
         return new WorkflowRunResult(runRow.getId(), STATE_FAILED, null, errorMessage);
+    }
+
+    /**
+     * Fire a {@code workflow_completion} event into the trigger pipeline so
+     * downstream workflows (or workflows reacting to upstream success /
+     * failure) can chain off this run. Synchronous and best-effort: a
+     * fan-out failure here MUST NOT corrupt the just-completed run state.
+     *
+     * <p>The eventId is keyed on {@code wf-run-{runId}} so a retry of the
+     * same run never duplicate-fires its completion downstream — the
+     * mate_trigger_event UNIQUE(trigger_id, dedup_key) constraint catches
+     * any redundant publish at insert time.
+     *
+     * <p>Package-private so {@link WorkflowResumer} can publish the same
+     * event for resumed runs that end on a rejected / timed-out approval
+     * (those don't go through {@link #finishFailed} since the resumer
+     * writes terminal state directly).
+     */
+    void publishCompletionEvent(WorkflowRunEntity runRow, String state,
+                                String finalOutputRef, String errorMessage) {
+        if (events == null || runRow == null) return;
+        try {
+            events.publishEvent(new WorkflowCompletionEvent(
+                    runRow.getId(),
+                    runRow.getWorkflowId() == null ? 0L : runRow.getWorkflowId(),
+                    runRow.getRevisionId() == null ? 0L : runRow.getRevisionId(),
+                    runRow.getWorkspaceId() == null ? 0L : runRow.getWorkspaceId(),
+                    state,
+                    finalOutputRef,
+                    errorMessage));
+        } catch (Exception e) {
+            log.warn("Workflow run {} completion event publish failed: {}",
+                    runRow.getId(), e.getMessage());
+        }
     }
 
     private WorkflowRunResult finishPaused(WorkflowRunEntity runRow, String pauseToken) {

@@ -3,7 +3,7 @@
     class="step-node"
     :class="`mode-${data.modeType}`"
     :data-selected="props.selected"
-    @click="handleClick"
+    @click.stop="handleClick"
   >
     <Handle type="target" :position="targetPosition" />
     <div class="step-band" />
