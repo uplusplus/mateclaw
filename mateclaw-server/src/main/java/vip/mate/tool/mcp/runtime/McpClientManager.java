@@ -17,6 +17,8 @@ import org.springframework.stereotype.Component;
 import vip.mate.tool.mcp.model.McpServerEntity;
 
 import jakarta.annotation.PreDestroy;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -371,7 +373,9 @@ public class McpClientManager {
         Duration connectTimeout = Duration.ofSeconds(
                 server.getConnectTimeoutSeconds() != null ? server.getConnectTimeoutSeconds() : 30);
 
-        var builder = HttpClientSseClientTransport.builder(server.getUrl())
+        HttpEndpointConfig endpointConfig = splitHttpUrl(server.getUrl(), "/sse");
+        var builder = HttpClientSseClientTransport.builder(endpointConfig.baseUrl())
+                .sseEndpoint(endpointConfig.endpoint())
                 .connectTimeout(connectTimeout);
 
         // Add headers via request customizer
@@ -391,7 +395,9 @@ public class McpClientManager {
         Duration connectTimeout = Duration.ofSeconds(
                 server.getConnectTimeoutSeconds() != null ? server.getConnectTimeoutSeconds() : 30);
 
-        var builder = HttpClientStreamableHttpTransport.builder(server.getUrl())
+        HttpEndpointConfig endpointConfig = splitHttpUrl(server.getUrl(), "/mcp");
+        var builder = HttpClientStreamableHttpTransport.builder(endpointConfig.baseUrl())
+                .endpoint(endpointConfig.endpoint())
                 .connectTimeout(connectTimeout);
 
         // Add headers via request customizer
@@ -405,6 +411,45 @@ public class McpClientManager {
         }
 
         return builder.build();
+    }
+
+    /**
+     * Splits a full HTTP MCP URL into a {@code scheme://authority} base and a
+     * {@code path[?query]} endpoint suffix. The underlying SDK builders take
+     * the two halves separately and resolve them via {@link URI#resolve(URI)},
+     * which replaces the base URL's path with the endpoint when the endpoint
+     * starts with {@code /}. Passing a full URL as the base would therefore
+     * silently route every request to the SDK's default endpoint
+     * (e.g. {@code /mcp}) and drop any user-configured path or query string.
+     *
+     * @param url             the user-configured full URL
+     * @param defaultEndpoint endpoint to use when the URL has no path
+     */
+    static HttpEndpointConfig splitHttpUrl(String url, String defaultEndpoint) {
+        String trimmed = url != null ? url.trim() : "";
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException("MCP server URL must not be empty");
+        }
+        URI uri;
+        try {
+            uri = new URI(trimmed);
+        } catch (URISyntaxException e) {
+            throw new IllegalArgumentException("Invalid MCP server URL: " + url, e);
+        }
+        if (uri.getScheme() == null || uri.getRawAuthority() == null) {
+            throw new IllegalArgumentException("MCP server URL must include scheme and host: " + url);
+        }
+        String path = uri.getRawPath();
+        String endpoint = (path == null || path.isEmpty() || "/".equals(path)) ? defaultEndpoint : path;
+        String query = uri.getRawQuery();
+        if (query != null && !query.isEmpty()) {
+            endpoint += "?" + query;
+        }
+        String baseUrl = uri.getScheme() + "://" + uri.getRawAuthority();
+        return new HttpEndpointConfig(baseUrl, endpoint);
+    }
+
+    record HttpEndpointConfig(String baseUrl, String endpoint) {
     }
 
     private Map<String, String> parseHeaders(McpServerEntity server) {
