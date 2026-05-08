@@ -74,11 +74,15 @@
                 <option value="webhook">webhook</option>
               </select>
             </label>
-            <label class="span-2">{{ t('triggers.fields.patternJson') }}
-              <textarea v-model="formState.patternJson" rows="3"
-                :placeholder="t('triggers.fields.patternJsonPlaceholder')" />
-              <small class="pattern-hint">{{ patternHint }}</small>
-            </label>
+            <div class="span-2">
+              <span class="form-grid-label">{{ t('triggers.fields.patternJson') }}</span>
+              <TriggerPatternForm
+                v-model="formState.patternJson"
+                :pattern-type="formState.patternType"
+                :available-workflows="availableWorkflows"
+                @validation="onPatternValidation"
+              />
+            </div>
             <label>{{ t('triggers.fields.targetType') }}
               <!-- v0 only ships the workflow dispatcher; agent target is
                    reserved for v1 and rejected by the API to avoid the
@@ -121,7 +125,12 @@
           </div>
           <footer>
             <button class="btn-ghost" @click="closeForm">{{ t('triggers.actions.cancel') }}</button>
-            <button class="btn-primary" :disabled="busy" @click="save">{{ t('triggers.actions.save') }}</button>
+            <button
+              class="btn-primary"
+              :disabled="busy || patternHasErrors"
+              :title="patternHasErrors ? Object.values(patternErrors).join('; ') : ''"
+              @click="save"
+            >{{ t('triggers.actions.save') }}</button>
           </footer>
         </section>
       </div>
@@ -136,6 +145,7 @@ import { ElMessage } from 'element-plus'
 import { mcConfirm } from '@/components/common/useConfirm'
 import { triggerApi, type TriggerSummary, workflowApi, type WorkflowSummary } from '@/api'
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore'
+import TriggerPatternForm from '@/components/workflow/TriggerPatternForm.vue'
 
 const { t } = useI18n()
 const workspaceStore = useWorkspaceStore()
@@ -147,10 +157,11 @@ const availableWorkflows = computed(() =>
   workflows.value.filter((w) => w.latestRevisionId)
 )
 
-const patternHint = computed(() => {
-  const key = `triggers.patternHints.${formState.value.patternType}`
-  return t(key, '')
-})
+const patternErrors = ref<Record<string, string>>({})
+function onPatternValidation(errs: Record<string, string>) {
+  patternErrors.value = errs
+}
+const patternHasErrors = computed(() => Object.keys(patternErrors.value).length > 0)
 
 const formOpen = ref(false)
 const editing = ref<TriggerSummary | null>(null)
@@ -388,6 +399,13 @@ watch(workspaceId, reload)
   font-family: 'JetBrains Mono', Consolas, monospace;
   opacity: 0.7;
   white-space: pre-wrap;
+}
+.form-grid-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 4px;
+  color: var(--mc-text-secondary, inherit);
 }
 .form-card footer {
   margin-top: 12px;

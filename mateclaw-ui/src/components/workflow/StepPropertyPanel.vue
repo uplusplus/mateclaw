@@ -93,13 +93,13 @@
       <label class="panel-field">
         <span class="field-label">{{ t('workflows.canvas.modeLabel') }}</span>
         <select class="mc-input" :value="modeType" @change="onModeChange">
-          <option value="sequential">sequential</option>
-          <option value="fan_out">fan_out</option>
-          <option value="collect">collect</option>
-          <option value="conditional">conditional</option>
-          <option value="await_approval">await_approval</option>
-          <option value="dispatch_channel">dispatch_channel</option>
-          <option value="write_memory">write_memory</option>
+          <option value="sequential">{{ modeOptionLabel('sequential') }}</option>
+          <option value="fan_out">{{ modeOptionLabel('fan_out') }}</option>
+          <option value="collect">{{ modeOptionLabel('collect') }}</option>
+          <option value="conditional">{{ modeOptionLabel('conditional') }}</option>
+          <option value="await_approval">{{ modeOptionLabel('await_approval') }}</option>
+          <option value="dispatch_channel">{{ modeOptionLabel('dispatch_channel') }}</option>
+          <option value="write_memory">{{ modeOptionLabel('write_memory') }}</option>
         </select>
       </label>
 
@@ -265,10 +265,14 @@ const { t } = useI18n()
 const modeType = computed(() => (props.step?.mode?.type ?? 'sequential') as string)
 
 const localizedModeLabel = computed(() => {
-  const key = `workflows.canvas.modeLabels.${modeType.value}`
-  const localized = t(key, '')
-  return localized && localized !== key ? localized : modeType.value
+  return modeOptionLabel(modeType.value)
 })
+
+function modeOptionLabel(type: string): string {
+  const key = `workflows.canvas.modeLabels.${type}`
+  const localized = t(key, '')
+  return localized && localized !== key ? localized : type
+}
 
 const modeNeedsAgent = computed(() => {
   // fan_out / collect / await_approval / dispatch_channel / write_memory
