@@ -55,18 +55,21 @@ public class TriggerEventIngestService {
     private final TriggerDispatcher dispatcher;
     private final BotSelfFilter botSelfFilter;
     private final ObjectMapper objectMapper;
+    private final TriggerPatternMatcher patternMatcher;
     private final TriggerRateLimiter rateLimiter = new TriggerRateLimiter();
 
     public TriggerEventIngestService(TriggerMapper triggerMapper,
                                      TriggerEventMapper eventMapper,
                                      TriggerDispatcher dispatcher,
                                      BotSelfFilter botSelfFilter,
-                                     ObjectMapper objectMapper) {
+                                     ObjectMapper objectMapper,
+                                     TriggerPatternMatcher patternMatcher) {
         this.triggerMapper = triggerMapper;
         this.eventMapper = eventMapper;
         this.dispatcher = dispatcher;
         this.botSelfFilter = botSelfFilter;
         this.objectMapper = objectMapper;
+        this.patternMatcher = patternMatcher;
     }
 
     /**
@@ -92,6 +95,14 @@ public class TriggerEventIngestService {
     }
 
     private IngestResult processSingle(TriggerEntity trigger, TriggerEventEnvelope envelope) {
+        // Pattern matching is the first gate — without it, every channel
+        // event would broadcast to every channel-message trigger in the
+        // workspace, which is exactly the storm hazard the design forbade.
+        // Run it before all the other filters so a non-matching trigger
+        // doesn't even allocate a dedup row.
+        if (!patternMatcher.matches(trigger, envelope)) {
+            return IngestResult.dropped(trigger.getId(), Reason.PATTERN_MISMATCH);
+        }
         if (Boolean.TRUE.equals(trigger.getBotSelfFilter())
                 && botSelfFilter.isBotSelf(envelope.workspaceId(), envelope.senderId())) {
             return IngestResult.dropped(trigger.getId(), Reason.BOT_SELF);
@@ -163,7 +174,7 @@ public class TriggerEventIngestService {
     }
 
     public enum Reason {
-        BOT_SELF, DUPLICATE, RATE_LIMITED, EXHAUSTED, DISPATCH_ERROR
+        PATTERN_MISMATCH, BOT_SELF, DUPLICATE, RATE_LIMITED, EXHAUSTED, DISPATCH_ERROR
     }
 
     public record IngestResult(long triggerId, boolean fired, Reason droppedReason) {

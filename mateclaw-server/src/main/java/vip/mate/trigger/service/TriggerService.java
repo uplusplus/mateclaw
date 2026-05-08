@@ -61,11 +61,25 @@ public class TriggerService {
             throw new IllegalArgumentException("trigger not found: " + updated.getId());
         }
 
+        // Bump pattern_version whenever ANY field that changes the
+        // schedule's behavior, payload rendering, or rate decisions
+        // changes. This is the lamport other instances rely on at fire
+        // time to decide whether their captured registration is stale —
+        // missing a field here means a peer fires the new payload with
+        // the old throttling settings (or vice versa) until it next
+        // self-cancels for some other reason.
         boolean patternChanged = !Objects.equals(existing.getPatternJson(), updated.getPatternJson())
                 || !Objects.equals(existing.getPatternType(), updated.getPatternType());
+        boolean payloadChanged = !Objects.equals(existing.getPayloadTemplate(), updated.getPayloadTemplate());
+        boolean targetChanged = !Objects.equals(existing.getTargetType(), updated.getTargetType())
+                || !Objects.equals(existing.getTargetId(), updated.getTargetId());
+        boolean fireConfigChanged = !Objects.equals(existing.getRateLimitPerMin(), updated.getRateLimitPerMin())
+                || !Objects.equals(existing.getDedupWindowSecs(), updated.getDedupWindowSecs())
+                || !Objects.equals(existing.getMaxFires(), updated.getMaxFires())
+                || !Objects.equals(existing.getBotSelfFilter(), updated.getBotSelfFilter());
         boolean enableTransition = !Objects.equals(existing.getEnabled(), updated.getEnabled());
 
-        if (patternChanged || enableTransition) {
+        if (patternChanged || payloadChanged || targetChanged || fireConfigChanged || enableTransition) {
             long bumped = (existing.getPatternVersion() == null ? 1L : existing.getPatternVersion()) + 1L;
             updated.setPatternVersion(bumped);
         } else {

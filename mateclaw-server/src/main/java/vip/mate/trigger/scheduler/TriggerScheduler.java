@@ -11,6 +11,7 @@ import net.javacrumbs.shedlock.core.LockProvider;
 import net.javacrumbs.shedlock.core.SimpleLock;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.scheduling.support.CronTrigger;
 import org.springframework.stereotype.Component;
@@ -82,16 +83,67 @@ public class TriggerScheduler {
     /** Boot-time registration sweep; runs after Flyway and bean wiring complete. */
     @EventListener(ApplicationReadyEvent.class)
     void registerEnabledTriggersOnStartup() {
+        syncFromDatabase();
+    }
+
+    /**
+     * Periodic sweep that converges this node's local registrations with
+     * the canonical state in {@code mate_trigger}.
+     *
+     * <p>Reasons this exists:
+     * <ul>
+     *   <li>Multi-instance: when node A creates / updates / disables a
+     *       cron trigger, node B never gets the local-only register call.
+     *       The fire-time {@code patternVersion} guard self-cancels stale
+     *       schedules but does NOT register newly-created or newly-enabled
+     *       triggers — only this sweep does.</li>
+     *   <li>Recovery from missed events: if a register / unregister call
+     *       races with a node restart, the in-memory map can drift from
+     *       the row state. Refreshing every minute caps the divergence.</li>
+     * </ul>
+     *
+     * <p>Convergence rules:
+     * <ul>
+     *   <li>Row enabled + cron type + not registered locally → register.</li>
+     *   <li>Row enabled but local {@code capturedVersion} differs from
+     *       row's {@code pattern_version} → re-register (the schedule
+     *       carries the new expression).</li>
+     *   <li>Local registration exists for a row that's now disabled,
+     *       deleted, or no longer cron-typed → unregister.</li>
+     * </ul>
+     */
+    @Scheduled(fixedDelayString = "${mateclaw.workflow.trigger.sync-interval-ms:60000}",
+               initialDelayString = "${mateclaw.workflow.trigger.sync-initial-delay-ms:60000}")
+    public void syncFromDatabase() {
         var enabled = triggerMapper.selectList(new LambdaQueryWrapper<TriggerEntity>()
                 .eq(TriggerEntity::getEnabled, true)
                 .eq(TriggerEntity::getDeleted, 0));
-        int loaded = 0;
+        java.util.Set<Long> seenIds = new java.util.HashSet<>();
+        int registered = 0, refreshed = 0, removed = 0;
         for (TriggerEntity t : enabled) {
-            if (PATTERN_CRON.equalsIgnoreCase(t.getPatternType())) {
-                if (registerInternal(t)) loaded++;
+            if (!PATTERN_CRON.equalsIgnoreCase(t.getPatternType())) continue;
+            seenIds.add(t.getId());
+            Registration current = registrations.get(t.getId());
+            long liveVersion = t.getPatternVersion() == null ? 1L : t.getPatternVersion();
+            if (current == null) {
+                if (registerInternal(t)) registered++;
+            } else if (current.capturedVersion != liveVersion) {
+                if (registerInternal(t)) refreshed++;
             }
         }
-        log.info("[TriggerScheduler] Registered {} cron triggers at startup", loaded);
+        // Drop registrations whose row was disabled / deleted / changed type
+        // since the last sweep. Snapshot the keys first to avoid concurrent
+        // modification on the underlying map.
+        for (Long localId : new java.util.ArrayList<>(registrations.keySet())) {
+            if (!seenIds.contains(localId)) {
+                unregister(localId);
+                removed++;
+            }
+        }
+        if (registered + refreshed + removed > 0) {
+            log.info("[TriggerScheduler] sync: registered={} refreshed={} removed={} active={}",
+                    registered, refreshed, removed, registrations.size());
+        }
     }
 
     /** Register or replace a single trigger (called from {@code TriggerService} on save). */
