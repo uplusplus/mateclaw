@@ -104,8 +104,9 @@ public class WorkflowController {
         }
         WorkflowCompiler.Result result;
         try {
+            // PublishContext is (workspaceId, publisherId) — mind the order.
             result = compiler.compile(row.getDraftJson(),
-                    new PublishContext(0L, row.getWorkspaceId()), aclPort);
+                    new PublishContext(row.getWorkspaceId(), 0L), aclPort);
         } catch (vip.mate.workflow.compiler.WorkflowParseException e) {
             // Malformed JSON / structurally invalid graph → render as a
             // single-error compile failure so the UI's existing errors

@@ -102,8 +102,10 @@ public class WorkflowResumeController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(R.fail("revision " + run.getRevisionId() + " missing for run " + runId));
         }
+        // PublishContext is (workspaceId, publisherId) — mind the order;
+        // ACL resolution scopes by workspace.
         WorkflowCompiler.Result compiled = compiler.compile(revision.getGraphJson(),
-                new PublishContext(0L, run.getWorkspaceId()), aclPort);
+                new PublishContext(run.getWorkspaceId(), 0L), aclPort);
         if (!compiled.ok()) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(R.fail("revision graph failed to recompile on resume"));

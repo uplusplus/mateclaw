@@ -32,18 +32,17 @@ public class DefaultAgentInvoker implements AgentInvoker {
     @Override
     public Long resolveAgentId(long workspaceId, String agentName) {
         if (agentName == null || agentName.isBlank()) return null;
+        // Workspace-scoped only — no fallback to a global lookup. The
+        // earlier "fall back to workspace-agnostic" branch let an old
+        // revision (or any code path that bypassed publish-time ACL)
+        // pull a same-named agent from a different workspace at runtime,
+        // which is exactly what tenant isolation forbids. The
+        // publish-time ACL layer is also workspace-scoped, so a draft
+        // referencing a foreign agent is rejected before it ever runs.
         AgentEntity entity = agentMapper.selectOne(new LambdaQueryWrapper<AgentEntity>()
                 .eq(AgentEntity::getWorkspaceId, workspaceId)
                 .eq(AgentEntity::getName, agentName.trim())
                 .eq(AgentEntity::getEnabled, true));
-        if (entity == null) {
-            // Fall back to a workspace-agnostic lookup so global agents still
-            // resolve. This mirrors how the workflow ACL phase counts an agent
-            // as "resolvable" if it exists anywhere the user can see it.
-            entity = agentMapper.selectOne(new LambdaQueryWrapper<AgentEntity>()
-                    .eq(AgentEntity::getName, agentName.trim())
-                    .eq(AgentEntity::getEnabled, true));
-        }
         return entity == null ? null : entity.getId();
     }
 }
