@@ -261,6 +261,78 @@ public class ApprovalWorkflowService implements ApplicationRunner {
     }
 
     /**
+     * Workflow-scoped approval request — creates a {@code mate_tool_approval}
+     * row keyed to a workflow run + step instead of a conversation, so an
+     * {@code await_approval} step is visible in the same approval inbox the
+     * tool-approval flow uses. Returns the row's auto-generated long id; the
+     * caller (typically {@code AwaitApprovalStepAdapter}) writes that id back
+     * onto {@code mate_workflow_run_pause.external_approval_id} so a future
+     * approval-resolve callback can map "approval X resolved → resume run Y".
+     *
+     * <p>The approval row's {@code conversationId} is set to
+     * {@code "workflow:run:{runId}"} as a synthetic key — that lets the
+     * existing {@link ApprovalService#findPendingByConversation} surface the
+     * workflow approval to operator UIs without needing a parallel query
+     * surface. {@code toolName} is set to {@code "workflow:{kind}"} so the
+     * inbox can group / filter workflow approvals from tool approvals.
+     *
+     * <p>v0 keeps the resume path through {@code WorkflowResumeController}
+     * with the pauseToken; this method does not yet wire a resolve→resume
+     * callback. The approval row's purpose for v0 is operator visibility
+     * and a stable foreign key for the pause record.
+     */
+    public Long requestWorkflowApproval(long workspaceId,
+                                        long runId,
+                                        Long stepId,
+                                        String approvalKind,
+                                        String approvalMessage,
+                                        java.util.List<String> approverChannels,
+                                        Integer timeoutSecs) {
+        try {
+            ToolApprovalEntity entity = new ToolApprovalEntity();
+            // pendingId is the string handle the existing approval pipeline
+            // uses for resolve / get; "wf-" prefix lets future code branch
+            // on workflow-scoped vs tool-scoped approvals at a glance. The
+            // pending_id column is VARCHAR(32) so we trim a no-dashes UUID
+            // down to fit ("wf-" + 24 hex chars = 27 chars; collisions of
+            // 24 hex chars per workflow are astronomically rare and we
+            // also fall back to UNIQUE-key violation handling).
+            String shortId = java.util.UUID.randomUUID().toString()
+                    .replace("-", "").substring(0, 24);
+            entity.setPendingId("wf-" + shortId);
+            entity.setConversationId("workflow:run:" + runId);
+            String kind = approvalKind == null || approvalKind.isBlank() ? "manual" : approvalKind.trim();
+            entity.setToolName("workflow:" + kind);
+            entity.setSummary(approvalMessage == null ? "" : approvalMessage);
+            // Encode approver channels in tool_arguments so the inbox UI can
+            // render which channels were asked. Plain JSON to keep parsing
+            // trivial on the read path.
+            try {
+                if (approverChannels != null && !approverChannels.isEmpty()) {
+                    entity.setToolArguments(objectMapper.writeValueAsString(
+                            java.util.Map.of(
+                                    "runId", runId,
+                                    "stepId", stepId,
+                                    "approverChannels", approverChannels)));
+                }
+            } catch (Exception e) {
+                log.warn("[ApprovalWorkflow] failed to encode approverChannels: {}", e.getMessage());
+            }
+            entity.setStatus("PENDING");
+            entity.setCreatedAt(LocalDateTime.now());
+            entity.setExpireAt(LocalDateTime.now().plusSeconds(
+                    timeoutSecs != null && timeoutSecs > 0 ? timeoutSecs : 30 * 60));
+            approvalMapper.insert(entity);
+            log.info("[ApprovalWorkflow] requested workflow approval row id={}, runId={}, workspace={}, kind={}",
+                    entity.getId(), runId, workspaceId, kind);
+            return entity.getId();
+        } catch (Exception e) {
+            log.warn("[ApprovalWorkflow] requestWorkflowApproval failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * Resolve a pending approval (approve / deny) following the RFC-067 §4.2 two-phase
      * contract: snapshot → DB UPDATE conditional on {@code status='PENDING'} →
      * metadata reconciliation → memory mutation queued for after-commit.

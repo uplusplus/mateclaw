@@ -1,7 +1,9 @@
 package vip.mate.workflow.runtime.mode;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import vip.mate.approval.ApprovalWorkflowService;
 import vip.mate.workflow.compiler.ir.StepMode;
 import vip.mate.workflow.compiler.ir.WorkflowStep;
 import vip.mate.workflow.model.WorkflowRunPauseEntity;
@@ -37,16 +39,24 @@ import java.util.UUID;
  * declares a {@code timeoutSecs}; otherwise it stays {@code null} and the
  * resumer treats the pause as open-ended.
  *
- * <p>The {@code external_approval_id} column on the pause row is reserved
- * for a future integration that bridges workflow pauses into the
- * tool-approval inbox; v0 leaves it null and routes resolution through the
- * pause-token path above.
+ * <p>The {@code external_approval_id} column on the pause row links to the
+ * {@code mate_tool_approval} row created via
+ * {@link ApprovalWorkflowService#requestWorkflowApproval} so the workflow
+ * pause is visible in the same approval inbox the tool-approval flow uses.
+ * Resolution still goes through {@code WorkflowResumeController} +
+ * pauseToken — the approval row is for operator visibility today; v1 wires
+ * the resolve→resume callback so an inbox decision can also fire the
+ * resumer.
  */
 @Component
 public class AwaitApprovalStepAdapter implements StepAdapter {
 
     private final WorkflowRunPauseMapper pauseMapper;
     private final WorkflowRunStepMapper stepMapper;
+    /** Optional — not all test contexts wire the approval module up. The
+     *  adapter falls back to a no-op approval row when null. */
+    @Autowired(required = false)
+    private ApprovalWorkflowService approvalService;
 
     public AwaitApprovalStepAdapter(WorkflowRunPauseMapper pauseMapper,
                                     WorkflowRunStepMapper stepMapper) {
@@ -77,6 +87,8 @@ public class AwaitApprovalStepAdapter implements StepAdapter {
         String pauseToken = UUID.randomUUID().toString();
         LocalDateTime now = LocalDateTime.now();
 
+        // Insert the pause row first so we have a stable id to reference
+        // even if the approval-service call below fails.
         WorkflowRunPauseEntity pause = new WorkflowRunPauseEntity();
         pause.setRunId(context.runId());
         pause.setStepId(stepRow.getId());
@@ -87,6 +99,35 @@ public class AwaitApprovalStepAdapter implements StepAdapter {
             pause.setResumeDeadline(now.plusSeconds(cfg.timeoutSecs()));
         }
         pauseMapper.insert(pause);
+
+        // Bridge into the approval inbox: create a mate_tool_approval row so
+        // the workflow pause shows up alongside tool approvals, then write
+        // the row id back as external_approval_id for the future
+        // resolve→resume callback. Failures here are non-fatal — the run
+        // is still resolvable via pauseToken + WorkflowResumeController.
+        if (approvalService != null) {
+            try {
+                Long approvalId = approvalService.requestWorkflowApproval(
+                        context.workspaceId(),
+                        context.runId(),
+                        stepRow.getId(),
+                        cfg.approvalKind(),
+                        cfg.approvalMessage(),
+                        cfg.approverChannels(),
+                        cfg.timeoutSecs());
+                if (approvalId != null) {
+                    pause.setExternalApprovalId(approvalId);
+                    pauseMapper.updateById(pause);
+                }
+            } catch (Exception e) {
+                // Non-fatal — log and continue. The pause row is the
+                // canonical record for v0; the approval row is a parallel
+                // visibility surface that can rebuild later if needed.
+                org.slf4j.LoggerFactory.getLogger(AwaitApprovalStepAdapter.class)
+                        .warn("await_approval failed to create approval row for run {}: {}",
+                                context.runId(), e.getMessage());
+            }
+        }
 
         return StepResult.paused(pauseToken,
                 "awaiting " + (cfg.approvalKind() == null ? "approval" : cfg.approvalKind()));
