@@ -41,6 +41,13 @@ public class WorkflowController {
     private final WorkflowRunPauseMapper pauseMapper;
     private final WorkflowCompiler compiler;
     private final WorkflowAclPort aclPort;
+    /** Optional — only present when the LLM module is wired (production).
+     *  Tests that don't boot the chat-model factory get a null and the
+     *  /draft/generate endpoint returns 503 instead of crashing. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private vip.mate.workflow.draftgen.WorkflowDraftGenerator draftGenerator;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private vip.mate.workflow.draftgen.WorkflowDraftTemplateLibrary draftTemplates;
 
     @Operation(summary = "List workflows in the workspace")
     @GetMapping
@@ -228,6 +235,35 @@ public class WorkflowController {
                         .last("LIMIT 1"));
         return R.ok(new RunDetail(run, steps, activePause));
     }
+
+    @Operation(summary = "Generate a workflow draft from a natural-language description.")
+    @PostMapping("/draft/generate")
+    public ResponseEntity<?> generateDraft(@RequestBody DraftGenerateRequest body,
+                                           @RequestHeader("X-Workspace-Id") long workspaceId) {
+        if (draftGenerator == null) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(R.fail("workflow draft generator is not configured on this deployment"));
+        }
+        if (body == null || body.description() == null || body.description().isBlank()) {
+            return ResponseEntity.badRequest().body(R.fail("description is required"));
+        }
+        try {
+            return ResponseEntity.ok(R.ok(draftGenerator.generate(body.description(), workspaceId)));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(R.fail(e.getMessage()));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(R.fail(e.getMessage()));
+        }
+    }
+
+    @Operation(summary = "List the canonical workflow templates the generator can apply directly.")
+    @GetMapping("/draft/templates")
+    public R<List<vip.mate.workflow.draftgen.WorkflowDraftTemplate>> listDraftTemplates() {
+        if (draftTemplates == null) return R.ok(List.of());
+        return R.ok(draftTemplates.all());
+    }
+
+    public record DraftGenerateRequest(String description) {}
 
     /** Narrow patch shape for {@link #update}; keeps the metadata path
      *  from accepting fields that would clobber the draft. */

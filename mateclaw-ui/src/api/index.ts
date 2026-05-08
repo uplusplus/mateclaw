@@ -891,6 +891,35 @@ export const workflowApi = {
       outcome,
       payload,
     }),
+  /** Generate a workflow draft from natural language. Returns the parsed
+   *  shape; the caller is responsible for creating a workflow row +
+   *  saving the draft if the user accepts it. */
+  generateDraft: (description: string) =>
+    http.post<GeneratedDraft>('/workflows/draft/generate', { description }),
+  /** Canonical workflow templates the generator can apply directly. */
+  listDraftTemplates: () =>
+    http.get<WorkflowDraftTemplate[]>('/workflows/draft/templates'),
+}
+
+export interface GeneratedDraft {
+  name: string
+  description: string
+  draftJson: string
+  triggerDrafts: Array<Record<string, unknown>>
+  warnings: string[]
+  missingFields: string[]
+  confidence?: number | null
+  compileOk: boolean
+  compileErrors: WorkflowCompileError[]
+}
+
+export interface WorkflowDraftTemplate {
+  id: string
+  label: string
+  description: string
+  matchHints: string[]
+  draftJson: string
+  triggerDraftsJson: string
 }
 
 // ==================== Trigger ====================

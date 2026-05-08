@@ -8,7 +8,10 @@
             <h1 class="mc-page-title">{{ t('workflows.title') }}</h1>
             <p class="mc-page-desc">{{ t('workflows.desc') }}</p>
           </div>
-          <button class="btn-primary" @click="openCreate">{{ t('workflows.newWorkflow') }}</button>
+          <div class="header-actions">
+            <button class="btn-ghost" @click="openGenerate">{{ t('workflows.generate.entryButton') }}</button>
+            <button class="btn-primary" @click="openCreate">{{ t('workflows.newWorkflow') }}</button>
+          </div>
         </div>
 
         <div class="workflows-grid">
@@ -205,6 +208,7 @@
 
     <CreateWorkflowDialog v-model="createDialogOpen" :loading="busy" @submit="onCreateSubmit" />
     <PublishDialog v-model="publishDialogOpen" :loading="busy" @submit="onPublishSubmit" />
+    <GenerateWorkflowDialog v-model="generateDialogOpen" @accept="onGenerateAccept" />
   </div>
 </template>
 
@@ -224,6 +228,7 @@ import {
   type WorkflowCompileFailure,
   type PausedRunSummary,
   type ResumeOutcome,
+  type GeneratedDraft,
 } from '@/api'
 import type { Channel } from '@/types'
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore'
@@ -232,6 +237,7 @@ import StepPropertyPanel from '@/components/workflow/StepPropertyPanel.vue'
 import WorkflowJsonEditor from '@/components/workflow/WorkflowJsonEditor.vue'
 import CreateWorkflowDialog from '@/components/workflow/CreateWorkflowDialog.vue'
 import PublishDialog from '@/components/workflow/PublishDialog.vue'
+import GenerateWorkflowDialog from '@/components/workflow/GenerateWorkflowDialog.vue'
 import type { StepNodeData, RawStep } from '@/composables/useWorkflowGraph'
 import {
   readStepAtIndex,
@@ -319,6 +325,43 @@ function onStepDelete(payload: { index: number }) {
 
 const createDialogOpen = ref(false)
 const publishDialogOpen = ref(false)
+const generateDialogOpen = ref(false)
+
+function openGenerate() {
+  if (!workspaceId.value) return
+  generateDialogOpen.value = true
+}
+
+async function onGenerateAccept(draft: GeneratedDraft) {
+  if (!workspaceId.value) return
+  busy.value = true
+  try {
+    // Create a workflow row + save the generated draft, then jump
+    // straight into the canvas so the operator can finish the TODOs.
+    const res = await workflowApi.create({
+      workspaceId: workspaceId.value,
+      name: draft.name,
+      description: draft.description || undefined,
+      enabled: true,
+    })
+    const created = res.data as unknown as WorkflowSummary
+    if (created?.id) {
+      await workflowApi.saveDraft(created.id, draft.draftJson)
+      await reload()
+      await select(created.id)
+      // If the generator's preview compile failed, surface the errors
+      // inline so the operator sees them immediately on first load.
+      if (!draft.compileOk && draft.compileErrors.length) {
+        compileErrors.value = draft.compileErrors
+      }
+      ElMessage.success(t('workflows.generate.compileOk'))
+    }
+  } catch (e) {
+    ElMessage.error(t('workflows.generate.failed', { msg: (e as Error).message }))
+  } finally {
+    busy.value = false
+  }
+}
 
 // Live JSON-syntax check on the textarea so the operator sees parse errors
 // immediately, instead of waiting for compile to round-trip.
