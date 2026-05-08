@@ -79,7 +79,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, markRaw, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, markRaw, onBeforeUnmount, provide, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueFlow, type Node } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
@@ -139,11 +139,24 @@ const miniNodeColor = (node: Node<StepNodeData>) => {
 }
 const miniNodeStrokeColor = () => 'transparent'
 
-function handleNodeClick(payload: { node: Node<StepNodeData> }) {
-  emit('select-step', payload?.node?.data ?? null)
+// Vue-flow's `@node-click` event signature has shifted across minor
+// versions and sometimes doesn't fire reliably for custom-node templates
+// because the click can be swallowed by the inner DOM. Bypass it: we
+// provide a selection callback to the StepNode via inject, and the node
+// invokes it directly on its own click handler.
+function selectStep(data: StepNodeData | null) {
+  emit('select-step', data)
+}
+provide('selectStepCallback', selectStep)
+
+function handleNodeClick(payload: { node: Node<StepNodeData> } | unknown) {
+  // Backup path: if vue-flow does fire its own node-click event with the
+  // expected shape, route it through the same emit.
+  const node = (payload as { node?: Node<StepNodeData> })?.node
+  if (node?.data) selectStep(node.data)
 }
 function handlePaneClick() {
-  emit('select-step', null)
+  selectStep(null)
 }
 
 // Reset direction toggle highlight when external code resets the model.

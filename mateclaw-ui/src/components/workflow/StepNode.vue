@@ -1,12 +1,18 @@
 <template>
-  <div class="step-node" :class="`mode-${data.modeType}`" :data-selected="props.selected">
+  <div
+    class="step-node"
+    :class="`mode-${data.modeType}`"
+    :data-selected="props.selected"
+    @click.stop="handleClick"
+    @pointerdown.stop
+  >
     <Handle type="target" :position="targetPosition" />
     <div class="step-band" />
     <div class="step-body">
       <div class="step-header">
         <span class="step-icon" v-html="modeIcon" />
         <span class="step-name" :title="data.name">{{ data.name }}</span>
-        <span class="step-mode-tag">{{ data.modeType }}</span>
+        <span class="step-mode-tag" :title="data.modeType">{{ modeLabel }}</span>
       </div>
       <div v-if="agentSlug" class="step-row">
         <span class="step-row-label">{{ t('workflows.canvas.nodeAgent') }}</span>
@@ -37,13 +43,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Handle, Position, type NodeProps } from '@vue-flow/core'
 import type { StepNodeData } from '@/composables/useWorkflowGraph'
 
 const props = defineProps<NodeProps<StepNodeData>>()
 const { t } = useI18n()
+
+// The canvas wrapper provides a selection callback so we can fire a
+// click straight up to the parent without depending on vue-flow's
+// node-click event, which doesn't fire reliably across versions when
+// the click lands on a custom-template inner element.
+const selectStep = inject<(data: StepNodeData | null) => void>(
+  'selectStepCallback',
+  () => {}
+)
+function handleClick() {
+  selectStep(props.data as StepNodeData)
+}
 
 // Position values come from the parent canvas (LR or TB orientation);
 // we read them off the node so the arrows attach in the right place.
@@ -96,6 +114,15 @@ const ICONS: Record<string, string> = {
 }
 
 const modeIcon = computed(() => ICONS[data.value.modeType] ?? ICONS.sequential)
+
+// Render the mode tag with the locale-mapped label and fall back to
+// the raw schema string for unknown / future modes so the tag never
+// shows an empty pill.
+const modeLabel = computed(() => {
+  const key = `workflows.canvas.modeLabels.${data.value.modeType}`
+  const localized = t(key, '')
+  return localized && localized !== key ? localized : data.value.modeType
+})
 </script>
 
 <style scoped>
@@ -179,10 +206,15 @@ const modeIcon = computed(() => ICONS[data.value.modeType] ?? ICONS.sequential)
 }
 .step-row-label {
   font-size: 10px;
-  text-transform: uppercase;
   letter-spacing: 0.04em;
-  opacity: 0.55;
+  opacity: 0.6;
   flex: 0 0 auto;
+  /* English row labels are short and visually fine in uppercase, but
+     CJK glyphs look noisy when the locale flips them through
+     text-transform. Leave casing to the locale string. */
+}
+:lang(en) .step-row-label {
+  text-transform: uppercase;
 }
 .step-row-value {
   flex: 1;

@@ -1960,6 +1960,15 @@ export default {
       nodeMergeStrategy: 'Merge',
       approvalDefault: 'manual',
       channelsEmpty: 'unspecified',
+      modeLabels: {
+        sequential: 'sequential',
+        fan_out: 'fan out',
+        collect: 'collect',
+        conditional: 'conditional',
+        await_approval: 'await approval',
+        dispatch_channel: 'dispatch',
+        write_memory: 'write memory',
+      },
       inspector: {
         title: 'Step inspector',
         empty: 'Click a node on the canvas to inspect it.',
