@@ -53,7 +53,15 @@ http.interceptors.response.use(
     if (err.response?.status === 401) {
       handleAuthFailure()
     }
-    return Promise.reject(err.response?.data?.msg || err.message)
+    // Wrap as Error so consumers can read e.message uniformly, but preserve
+    // err.response so callers needing the structured payload (e.g. workflow
+    // compile errors → response.data.data.errors[]) can still reach it.
+    // The previous shape rejected with a bare string, which silently
+    // stripped the body and made 422-class errors look like "no response"
+    // on the publish/compile flows.
+    const wrapped = new Error(err.response?.data?.msg || err.message || 'Request failed')
+    ;(wrapped as Error & { response?: unknown }).response = err.response
+    return Promise.reject(wrapped)
   }
 )
 
