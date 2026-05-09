@@ -180,6 +180,49 @@ export default {
     // RFC-074 PR-2: empty-state inside the model dropdown
     noProvidersConfigured: '还没有可用的模型',
     goConfigure: '去配置',
+    // Issue #81: liveness-aware popup state machine.
+    prompt: {
+      noActive: {
+        title: '请先选择一个模型',
+        desc: '当前没有激活模型，先到模型管理选一个再开始对话。',
+      },
+      unconfigured: {
+        title: '{name} 还没配置完',
+        desc: '缺少：{fields}。{hint}',
+      },
+      removed: {
+        title: '{name} 不可用',
+        descFallback: '上一次探测失败，请检查服务是否在运行。',
+      },
+      cooldown: {
+        title: '{name} 暂时不可用',
+        desc: '约 {seconds} 秒后自动重试。',
+      },
+      unprobed: {
+        title: '正在检查模型可用性',
+        desc: '稍候片刻或刷新重试。',
+      },
+      noModels: {
+        title: '{name} 下没有可用模型',
+        desc: '尝试发现模型或手动添加一个。',
+      },
+    },
+    promptAction: {
+      fillBaseUrl: '填写 Base URL',
+      fillApiKey: '填写 API Key',
+      fillRequiredFields: '完成必填项',
+      startOAuth: '登录授权',
+      testConnection: '测试连接',
+      pullModel: '发现模型',
+      waitCooldown: '立即重试',
+      reprobe: '重新探测',
+      switchToModel: '切换到 {name}',
+      fixThis: '修复',
+    },
+    recoverableBanner: {
+      message: '{name} 暂时不可用，发送时会自动用 {fallback} 兜底',
+      switched: '主模型不可用，已切换到 {fallback}',
+    },
     uploadFailed: '文件上传失败',
     dropToUpload: '拖放文件或文件夹到此处',
     copyFailed: '复制失败',
@@ -314,6 +357,22 @@ export default {
     appearance: '外观与语言',
     roleUser: '用户',
     roleAdmin: '管理员',
+  },
+  // Issue #81: provider-level hint / status text shared across chat popup and ModelSelector.
+  provider: {
+    hint: {
+      ollamaBaseUrlExample: '示例：{example}',
+      lmstudioBaseUrlExample: '示例：{example}（LM Studio 默认端口）',
+      llamacppBaseUrlExample: '示例：{example}（llama-server 默认端口）',
+      vllmBaseUrlExample: '示例：{example}',
+      openaiCompatBaseUrlExample: '示例：OpenAI 兼容端点，例如 {example}',
+    },
+    status: {
+      unconfigured: '未配置',
+      removed: '不可用',
+      cooldown: '{s}s 后重试',
+      unprobed: '检测中',
+    },
   },
   settings: {
     title: '设置',

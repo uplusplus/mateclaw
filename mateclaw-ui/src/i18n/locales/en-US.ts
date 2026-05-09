@@ -180,6 +180,49 @@ export default {
     // RFC-074 PR-2: empty-state inside the model dropdown
     noProvidersConfigured: 'No models available yet',
     goConfigure: 'Configure',
+    // Issue #81: liveness-aware popup state machine.
+    prompt: {
+      noActive: {
+        title: 'Pick a model first',
+        desc: 'No active model. Choose one in Model Management before chatting.',
+      },
+      unconfigured: {
+        title: '{name} is not fully configured',
+        desc: 'Missing: {fields}. {hint}',
+      },
+      removed: {
+        title: '{name} is unavailable',
+        descFallback: 'The last probe failed — check whether the service is running.',
+      },
+      cooldown: {
+        title: '{name} is temporarily unavailable',
+        desc: 'Auto-retrying in about {seconds}s.',
+      },
+      unprobed: {
+        title: 'Checking model availability',
+        desc: 'Hold on or refresh to retry.',
+      },
+      noModels: {
+        title: '{name} has no usable models',
+        desc: 'Discover models or add one manually.',
+      },
+    },
+    promptAction: {
+      fillBaseUrl: 'Fill Base URL',
+      fillApiKey: 'Fill API Key',
+      fillRequiredFields: 'Complete required fields',
+      startOAuth: 'Sign in',
+      testConnection: 'Test connection',
+      pullModel: 'Discover models',
+      waitCooldown: 'Retry now',
+      reprobe: 'Re-probe',
+      switchToModel: 'Switch to {name}',
+      fixThis: 'Fix',
+    },
+    recoverableBanner: {
+      message: '{name} is unavailable; sends will fall back to {fallback} automatically',
+      switched: 'Primary model unavailable; switched to {fallback}',
+    },
     uploadFailed: 'File upload failed',
     dropToUpload: 'Drop files or folders here',
     copyFailed: 'Copy failed',
@@ -428,6 +471,22 @@ export default {
     refresh: 'Re-check',
     lastChecked: 'Checked {time} ago',
     diagnose: 'Diagnose',
+  },
+  // Issue #81: provider-level hint / status text shared across chat popup and ModelSelector.
+  provider: {
+    hint: {
+      ollamaBaseUrlExample: 'Example: {example}',
+      lmstudioBaseUrlExample: 'Example: {example} (LM Studio default port)',
+      llamacppBaseUrlExample: 'Example: {example} (llama-server default port)',
+      vllmBaseUrlExample: 'Example: {example}',
+      openaiCompatBaseUrlExample: 'Example: OpenAI-compatible endpoint, e.g. {example}',
+    },
+    status: {
+      unconfigured: 'Not configured',
+      removed: 'Unavailable',
+      cooldown: 'Retry in {s}s',
+      unprobed: 'Probing',
+    },
   },
   settings: {
     title: 'Settings',

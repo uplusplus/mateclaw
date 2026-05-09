@@ -742,6 +742,24 @@ export interface ProviderInfo {
   cooldownRemainingMs?: number
   /** RFC-074: whether the user has explicitly opted this provider into the dropdown. */
   enabled?: boolean
+
+  // Issue #81: derived liveness fields powering the chat-console popup state machine.
+  /** CONFIGURED / MISSING / NOT_REQUIRED / OAUTH_PENDING. */
+  authStatus?: string
+  /** null = base url N/A; true/false = applicable and complete/incomplete. */
+  baseUrlComplete?: boolean | null
+  /** Comma-joined missing field names ("apiKey", "baseUrl"); empty when nothing missing. */
+  missingFields?: string
+  /**
+   * Machine-readable next-step key driving the popup primary button.
+   * fill_base_url / fill_api_key / start_oauth / configure_required_fields /
+   * test_connection / pull_model / wait_cooldown / reprobe / none.
+   */
+  suggestedAction?: string
+  /** i18n key for the actionable hint, e.g. "provider.hint.llamacppBaseUrlExample". */
+  suggestedActionHintKey?: string | null
+  /** Template params for vue-i18n t(key, args). */
+  suggestedActionHintArgs?: Record<string, unknown>
 }
 
 /**
