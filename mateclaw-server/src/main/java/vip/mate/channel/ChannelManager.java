@@ -46,6 +46,17 @@ public class ChannelManager {
     private final ObjectMapper objectMapper;
     private final vip.mate.tool.document.GeneratedFileCache generatedFileCache;
 
+    /**
+     * Approval notification renderer — used by WeCom adapter (PR-0
+     * threading; PR-1 will switch the WeCom override to render a
+     * {@code button_interaction} card via this service's card builder).
+     * Other adapters keep using the text path on
+     * {@link AbstractChannelAdapter}, which calls
+     * {@code ApprovalNotificationService.staticBuildText} so this
+     * field is currently consumed only by WeCom.
+     */
+    private final vip.mate.channel.notification.ApprovalNotificationService approvalNotificationService;
+
     /** 运行中的渠道适配器：channelId -> adapter */
     private final Map<Long, ChannelAdapter> activeAdapters = new HashMap<>();
 
@@ -455,7 +466,8 @@ public class ChannelManager {
             case "feishu" -> new FeishuChannelAdapter(channel, messageRouter, objectMapper);
             case "telegram" -> new TelegramChannelAdapter(channel, messageRouter, objectMapper);
             case "discord" -> new DiscordChannelAdapter(channel, messageRouter, objectMapper);
-            case "wecom" -> new WeComChannelAdapter(channel, messageRouter, objectMapper);
+            case "wecom" -> new WeComChannelAdapter(channel, messageRouter, objectMapper,
+                    approvalNotificationService);
             case "qq" -> new QQChannelAdapter(channel, messageRouter, objectMapper);
             case "weixin" -> new WeixinChannelAdapter(channel, messageRouter, objectMapper);
             case "slack" -> new vip.mate.channel.slack.SlackChannelAdapter(channel, messageRouter, objectMapper);

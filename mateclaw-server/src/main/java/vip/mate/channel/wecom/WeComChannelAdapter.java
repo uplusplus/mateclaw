@@ -114,18 +114,54 @@ public class WeComChannelAdapter extends AbstractChannelAdapter {
     /** 消息去重集合 */
     private final Set<String> processedMessageIds = ConcurrentHashMap.newKeySet();
 
-    /** 回复 ACK 等待：reqId -> CompletableFuture */
+    /** 回复 ACK 等待：reqId -> CompletableFuture（在 reqIdWorker 串行内 put，避免同 reqId 多次发送时撞 key） */
     private final ConcurrentHashMap<String, CompletableFuture<Map<String, Object>>> pendingAcks = new ConcurrentHashMap<>();
 
-    /** 回复队列：reqId -> 串行队列（保证同一 reqId 的回复按序发送） */
-    private final ConcurrentHashMap<String, LinkedBlockingQueue<ReplyTask>> replyQueues = new ConcurrentHashMap<>();
+    /**
+     * Per-reqId 串行回复队列状态。Key=reqId，value 是 {@link ReplyQueueState}
+     * 包装的 (queue, closed) 二元组，用来在 idle-close 与 late-offer 之间提供
+     * compute-bin-lock 级原子化（RFC-32 §2.4.1 a-2 / R-5 修正）。
+     *
+     * <p>{@code closed} 是防御性标志位：worker 在 idle compute 退出时会把 entry
+     * 从 map 删掉，所以正常路径上 enqueue 看不到一个"closed=true 还在 map 里"的
+     * state；保留这个标志为未来重构兜底，避免任何破坏"close = remove entry"
+     * 耦合的改动让 silent drop 复活。
+     */
+    private final ConcurrentHashMap<String, ReplyQueueState> replyQueues = new ConcurrentHashMap<>();
 
-    /** 回复队列处理线程池 */
-    private final ExecutorService replyExecutor = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "wecom-reply");
-        t.setDaemon(true);
-        return t;
-    });
+    /**
+     * 回复队列 worker 池。volatile + 非 final 是 RFC-32 §2.4.1 a-1 / R-2 修正
+     * 的一部分：stop/重连时需要 {@link ExecutorService#shutdownNow()} 中断
+     * worker 阻塞中的 {@code queue.poll(60s)}，但 cached pool 一旦 shutdown
+     * 就不能重用，所以必须能在 {@link #ensureReplyExecutor()} 里重建。
+     */
+    private volatile ExecutorService replyExecutor;
+
+    /**
+     * Lifecycle gate：控制 {@link #sendFrameWithAck} 是否接受新任务。
+     *
+     * <p>必须由 <b>transport-ready 信号</b> 触发置 true（即认证成功后的
+     * {@link #markReady()}），而不是 executor-ready（{@link #ensureReplyExecutor()}）。
+     * 否则会出现"executor 活的、accepting=true、但 webSocket=null"的窗口——
+     * worker 调 {@link #sendFrame} 看到 {@code webSocket==null} 就 warn 后默默 return，
+     * 让 caller 等 5s 假超时（RFC-32 §2.4.1 a-1 / R-7 修正）。
+     */
+    private final AtomicBoolean replyQueueAccepting = new AtomicBoolean(false);
+
+    /**
+     * Per-reqId 回复队列状态。
+     *
+     * @param queue  串行回复任务队列
+     * @param closed 防御性 closed 标志（详见 {@link #replyQueues} 注释）
+     */
+    private record ReplyQueueState(
+            LinkedBlockingQueue<ReplyTask> queue,
+            AtomicBoolean closed
+    ) {
+        static ReplyQueueState fresh() {
+            return new ReplyQueueState(new LinkedBlockingQueue<>(), new AtomicBoolean(false));
+        }
+    }
 
     /** WebSocket 消息碎片缓冲区 */
     private final StringBuilder wsBuffer = new StringBuilder();
@@ -153,10 +189,26 @@ public class WeComChannelAdapter extends AbstractChannelAdapter {
      */
     private final AtomicBoolean disconnectInflight = new AtomicBoolean(false);
 
+    /**
+     * Optional approval-notification renderer.
+     *
+     * <p>Wired in PR-0 for forward compatibility. PR-1 will use this to
+     * build {@code button_interaction} card payloads for tool-guard
+     * approvals; PR-0 keeps the field but does not consume it (the
+     * default text path on {@link AbstractChannelAdapter#sendApprovalNotice}
+     * still handles approvals). {@code null}-tolerant: if Spring DI
+     * cannot find the bean (unit-test contexts, hot-swap edge cases,
+     * etc.) the adapter still functions in PR-0 fashion.
+     */
+    @SuppressWarnings("unused")  // consumed in PR-1
+    private final vip.mate.channel.notification.ApprovalNotificationService approvalNotificationService;
+
     public WeComChannelAdapter(ChannelEntity channelEntity,
                                ChannelMessageRouter messageRouter,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper,
+                               vip.mate.channel.notification.ApprovalNotificationService approvalNotificationService) {
         super(channelEntity, messageRouter, objectMapper);
+        this.approvalNotificationService = approvalNotificationService;
         // Default to 8 bounded attempts (~4 minutes total at 2s..30s exponential)
         // so the UI eventually settles in ERROR instead of getting stuck in
         // RECONNECTING forever. User config still overrides (-1 = infinite).
@@ -185,6 +237,11 @@ public class WeComChannelAdapter extends AbstractChannelAdapter {
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
 
+        // Build the reply-queue worker pool BEFORE the WS handshake kicks off, so
+        // any inbound auth_succeed → markReady → openReplyQueue path finds a live
+        // executor to schedule against. The gate stays closed until markReady runs.
+        ensureReplyExecutor();
+
         connectWebSocket(botId, secret);
 
         log.info("[wecom] WeCom bot channel initialized: botId={}, maxReconnectAttempts={}",
@@ -211,6 +268,11 @@ public class WeComChannelAdapter extends AbstractChannelAdapter {
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
 
+        // Re-arm the reply-queue worker pool BEFORE attempting the new
+        // handshake. accepting flag stays false until the new connection's
+        // auth_succeed fires markReady → openReplyQueue.
+        ensureReplyExecutor();
+
         String botId = getConfigString("bot_id");
         String secret = getConfigString("secret");
         connectWebSocket(botId, secret);
@@ -229,6 +291,16 @@ public class WeComChannelAdapter extends AbstractChannelAdapter {
      * "Disable + Enable" did to recover.
      */
     private void releaseConnectionResources(String reason) {
+        // ============================================================================
+        // RFC-32 §2.4.1 a-3 / R-6 + R-8 修正：必须按 step 0~4 顺序，不是尾部追加。
+        // step 0 (replyQueueAccepting=false) 必须在 ws.close()/wsThread.join() 之前；
+        // 否则在 ws teardown 期间还会有 keepalive / 最终回复 / proactiveSend 漏进 enqueue。
+        // ============================================================================
+
+        // ---- Step 0：先关 lifecycle gate，让任何后续 sendFrameWithAck 立刻 fast-fail ----
+        replyQueueAccepting.set(false);
+
+        // ---- 现有的 ws/heartbeat teardown（功能未变；插在 step 0 之后、step 1 之前） ----
         if (heartbeatFuture != null) {
             heartbeatFuture.cancel(false);
             heartbeatFuture = null;
@@ -253,15 +325,167 @@ public class WeComChannelAdapter extends AbstractChannelAdapter {
             }
             wsThread = null;
         }
-        pendingAcks.forEach((k, f) ->
-                f.completeExceptionally(new RuntimeException("Channel " + reason)));
-        pendingAcks.clear();
+
+        // ---- Step 1：第一次 drain replyQueues ----
+        // forEach 是 weakly-consistent 迭代器，可能错过 step 0 之前刚提交但还没出 compute
+        // 的 enqueue —— step 3 会再 drain 一次兜底。
+        replyQueues.forEach((rid, state) -> {
+            state.closed().set(true);
+            ReplyTask t;
+            while ((t = state.queue().poll()) != null) {
+                if (!t.future().isDone()) {
+                    t.future().completeExceptionally(new IllegalStateException("Channel " + reason));
+                }
+            }
+        });
+
+        // ---- Step 2：shutdownNow 中断 worker 阻塞中的 poll(60s) + 拒绝后续 submit ----
+        ExecutorService oldExecutor = this.replyExecutor;
+        if (oldExecutor != null) {
+            oldExecutor.shutdownNow();
+            this.replyExecutor = null;
+        }
+
+        // ---- Step 3：second drain，捕获 step 1 与 step 2 之间的窗口期残留 ----
+        // 此刻 shutdownNow 已经把任何新 fresh state 的 worker 拒掉，drain 是它们唯一退路。
+        replyQueues.forEach((rid, state) -> {
+            state.closed().set(true);
+            ReplyTask t;
+            while ((t = state.queue().poll()) != null) {
+                if (!t.future().isDone()) {
+                    t.future().completeExceptionally(new IllegalStateException("Channel " + reason));
+                }
+            }
+        });
         replyQueues.clear();
+
+        // ---- Step 4：pendingAcks 残留 ----
+        pendingAcks.forEach((k, f) -> {
+            if (!f.isDone()) {
+                f.completeExceptionally(new IllegalStateException("Channel " + reason));
+            }
+        });
+        pendingAcks.clear();
+
+        // ---- 其他 per-connection 状态 ----
         pendingFrames.clear();
         replyContexts.clear();
         missedPongCount.set(0);
 
         this.httpClient = null;
+    }
+
+    // ====================================================================
+    // RFC-32 §2.0.5 / §2.4.1 a-1: lifecycle gate plumbing
+    // ====================================================================
+
+    /**
+     * (Re)build the worker pool. Called from {@link #doStart()} and
+     * {@link #doReconnect()}. <b>Does not</b> touch the {@link #replyQueueAccepting}
+     * gate — that flag is controlled by the transport-ready signal
+     * ({@link #markReady()}). See §2.4.1 a-1 / R-7.
+     */
+    private void ensureReplyExecutor() {
+        if (replyExecutor == null || replyExecutor.isShutdown()) {
+            replyExecutor = Executors.newCachedThreadPool(r -> {
+                Thread t = new Thread(r, "wecom-reply");
+                t.setDaemon(true);
+                return t;
+            });
+        }
+    }
+
+    /**
+     * Open the {@link #replyQueueAccepting} lifecycle gate. <b>Only</b>
+     * called from {@link #markReady()} after auth_succeed. Until this
+     * runs, every {@link #sendFrameWithAck} call fast-fails the caller's
+     * future with {@link IllegalStateException}.
+     */
+    private void openReplyQueue() {
+        replyQueueAccepting.set(true);
+    }
+
+    /**
+     * Per-reqId serial worker. Started lazily by
+     * {@link #sendFrameWithAck} when a fresh {@link ReplyQueueState} is
+     * created. Exits when:
+     * <ul>
+     *   <li>queue is idle for 60s and atomically closes via compute
+     *       (so any concurrent late-offer is observed and we stay alive)</li>
+     *   <li>{@code running} flips to false</li>
+     *   <li>worker thread is interrupted (e.g. by
+     *       {@link ExecutorService#shutdownNow()})</li>
+     * </ul>
+     *
+     * <p>The compute-based idle-close fixes the TOCTOU race called out
+     * in RFC-32 §2.4.1 a-2 / R-5: enqueue's {@code compute} and
+     * worker's idle-close {@code compute} share the same bin lock,
+     * so offer and remove never interleave on the same key.
+     */
+    private void reqIdWorker(String reqId, ReplyQueueState state) {
+        while (running.get() && !Thread.currentThread().isInterrupted()) {
+            ReplyTask task;
+            try {
+                task = state.queue().poll(60, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;  // fall through to drainStateExceptionally + return
+            }
+
+            if (task == null) {
+                // Atomic close — serialized against sendFrameWithAck.compute on
+                // the same reqId by ConcurrentHashMap's bin lock.
+                ReplyQueueState afterClose = replyQueues.compute(reqId, (k, current) -> {
+                    if (current != state) return current;                 // (c) replaced — defensive exit
+                    if (!current.queue().isEmpty()) return current;       // (b) late offer — stay alive
+                    current.closed().set(true);                            // (a) truly idle — close
+                    return null;                                           // (a) remove entry
+                });
+                if (afterClose != state) return;  // (a) or (c) — exit
+                continue;                          // (b) — keep going
+            }
+
+            try {
+                pendingAcks.put(reqId, task.future());
+                // orTimeout 5s 兜底，whenComplete 在完成时清 pendingAcks。
+                // 用 (key, value) 双参 remove 避免误删后续 task 的注册。
+                task.future().orTimeout(REPLY_ACK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                        .whenComplete((r, ex) -> pendingAcks.remove(reqId, task.future()));
+                sendFrame(task.frame());
+                task.future().join();   // serialize: don't dequeue next until this is done
+            } catch (CompletionException ce) {
+                // join() 抛的是 orTimeout 注入的异常（典型：TimeoutException）——
+                // task.future 已经 complete，无需手动 fail
+                log.debug("[wecom] reply task ACK failed for reqId={}: {}", reqId, ce.getCause());
+            } catch (Exception e) {
+                // sendFrame 同步抛 → ACK 永远不会到 → 必须显式 fail，否则 caller future 永久 pending
+                if (!task.future().isDone()) {
+                    task.future().completeExceptionally(e);
+                }
+                pendingAcks.remove(reqId, task.future());
+                log.debug("[wecom] reply task send failed for reqId={}: {}", reqId, e.getMessage());
+            }
+        }
+
+        // running=false / interrupted: mark closed + drain leftover
+        state.closed().set(true);
+        drainStateExceptionally(reqId, state, "channel stopped");
+    }
+
+    /**
+     * Drain remaining tasks in a {@link ReplyQueueState} and best-effort
+     * remove the entry from {@link #replyQueues}. Used by worker exit
+     * paths (running=false / interrupt). For {@link #releaseConnectionResources}
+     * the drain is inlined (step 1 / step 3) to keep the ordering proof local.
+     */
+    private void drainStateExceptionally(String reqId, ReplyQueueState state, String reason) {
+        ReplyTask t;
+        while ((t = state.queue().poll()) != null) {
+            if (!t.future().isDone()) {
+                t.future().completeExceptionally(new IllegalStateException(reason));
+            }
+        }
+        replyQueues.remove(reqId, state);
     }
 
     // ==================== WebSocket 连接 ====================
@@ -354,6 +578,10 @@ public class WeComChannelAdapter extends AbstractChannelAdapter {
             reconnectFuture = null;
         }
         disconnectInflight.set(false);
+        // RFC-32 §2.4.1 a-1 / R-7: only NOW does sendFrameWithAck start
+        // accepting tasks — auth_succeed has just been observed and the
+        // WS is the canonical "transport ready" anchor.
+        openReplyQueue();
     }
 
     /**
@@ -1063,10 +1291,33 @@ public class WeComChannelAdapter extends AbstractChannelAdapter {
      * @param finish        是否结束流式消息
      */
     private void replyStream(String originalReqId, String streamId, String content, boolean finish) {
+        replyStream(originalReqId, streamId, content, finish, null);
+    }
+
+    /**
+     * Streaming reply with optional WeCom feedback id attached on the
+     * final chunk (PR-2 hook installed in PR-0 so the protocol surface
+     * is stable).
+     *
+     * <p>Per WeCom AI Bot protocol (verified against the langbot
+     * reference implementation), {@code feedback.id} is only meaningful
+     * on the chunk where {@code finish=true}. We accept the parameter
+     * on every chunk for ergonomics but only emit the JSON field on
+     * the finishing chunk to avoid surfacing it where the server
+     * would ignore it.
+     *
+     * <p>Callers that don't need feedback collection pass {@code null}
+     * for {@code feedbackId} (or use the legacy 4-arg overload).
+     */
+    private void replyStream(String originalReqId, String streamId, String content,
+                             boolean finish, String feedbackId) {
         Map<String, Object> streamBody = new LinkedHashMap<>();
         streamBody.put("id", streamId);
         streamBody.put("finish", finish);
         streamBody.put("content", content);
+        if (finish && feedbackId != null && !feedbackId.isBlank()) {
+            streamBody.put("feedback", Map.of("id", feedbackId));
+        }
 
         Map<String, Object> body = Map.of(
                 "msgtype", "stream",
@@ -1407,27 +1658,94 @@ public class WeComChannelAdapter extends AbstractChannelAdapter {
     }
 
     /**
-     * 串行队列发送帧，等待 ACK（带超时）
-     * <p>
-     * 同一 reqId 的消息按顺序发送，每条等待 ACK 后再发下一条。
+     * Serially send a frame on the WS and wait (in a per-reqId worker)
+     * for its ACK. Same {@code reqId} messages are guaranteed to be
+     * dispatched in arrival order: the worker reads from the queue,
+     * registers {@link #pendingAcks} only after the previous ACK
+     * settled, sends, then blocks on the future until the ACK arrives
+     * or {@link #REPLY_ACK_TIMEOUT_MS} elapses.
+     *
+     * <p>RFC-32 §2.4.1 a-2 / R-5/R-6/R-7 invariants this implements:
+     * <ul>
+     *   <li><b>Lifecycle gate</b>: outer + inner check on
+     *       {@link #replyQueueAccepting}. If closed, the returned
+     *       future is fast-failed with {@link IllegalStateException}
+     *       — never registered, never enqueued.</li>
+     *   <li><b>TOCTOU between idle-close and late-offer</b>: the
+     *       offer happens INSIDE the {@code compute} lambda, sharing
+     *       the bin lock with the worker's own {@code compute}-based
+     *       idle-close. They serialize cleanly.</li>
+     *   <li><b>Executor null/shutdown defense</b>: re-checked inside
+     *       compute; submit wrapped in try/catch for
+     *       {@link RejectedExecutionException}.</li>
+     *   <li><b>offered[] flag</b>: any path that doesn't successfully
+     *       offer falls through to {@code completeExceptionally}; no
+     *       caller future ever hangs forever.</li>
+     * </ul>
+     *
+     * <p>Returns the ACK future for callers that want to chain on
+     * success (e.g. extract {@code body} fields from the ACK frame).
+     * Existing fire-and-forget callers can ignore the return value;
+     * timeout/error handling lives inside the worker.
      */
-    private void sendFrameWithAck(String reqId, Map<String, Object> frame) {
+    @SuppressWarnings("UnusedReturnValue")
+    private CompletableFuture<Map<String, Object>> sendFrameWithAck(String reqId, Map<String, Object> frame) {
         CompletableFuture<Map<String, Object>> ackFuture = new CompletableFuture<>();
 
-        // 注册 ACK 等待
-        pendingAcks.put(reqId, ackFuture);
+        // ---- Outer lifecycle check (fast-fail, no allocations beyond the future) ----
+        if (!replyQueueAccepting.get()) {
+            ackFuture.completeExceptionally(
+                    new IllegalStateException("WeCom channel not accepting reply tasks (lifecycle gate closed)"));
+            return ackFuture;
+        }
 
-        // 发送帧
-        sendFrame(frame);
+        ReplyTask task = new ReplyTask(frame, ackFuture);
+        boolean[] offered = {false};
 
-        // 等待 ACK（超时 5 秒，不阻塞当前线程 — fire and forget）
-        ackFuture.orTimeout(REPLY_ACK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                .whenComplete((result, ex) -> {
-                    pendingAcks.remove(reqId);
-                    if (ex != null) {
-                        log.debug("[wecom] Reply ACK timeout or error for reqId={}: {}", reqId, ex.getMessage());
-                    }
-                });
+        try {
+            replyQueues.compute(reqId, (k, existing) -> {
+                // ---- Inner lifecycle check: gate may have flipped between outer check and bin lock ----
+                if (!replyQueueAccepting.get()) {
+                    return existing;  // do NOT modify map; offered[0] stays false → fail below
+                }
+
+                // ---- Reuse open state if present ----
+                if (existing != null && !existing.closed().get()) {
+                    existing.queue().offer(task);
+                    offered[0] = true;
+                    return existing;
+                }
+
+                // ---- Need to start a fresh state. Defend against late-shutdown ----
+                ExecutorService exec = this.replyExecutor;
+                if (exec == null || exec.isShutdown()) {
+                    return existing;  // executor torn down by release; fail below
+                }
+
+                ReplyQueueState fresh = ReplyQueueState.fresh();
+                fresh.queue().offer(task);
+                try {
+                    exec.submit(() -> reqIdWorker(k, fresh));
+                    offered[0] = true;
+                    return fresh;
+                } catch (RejectedExecutionException ree) {
+                    // Race with shutdownNow between isShutdown check and submit
+                    return existing;  // do not write fresh; fail below
+                }
+            });
+        } catch (Exception e) {
+            // compute lambda surfaced something we didn't expect — never let this leak as
+            // a hung future
+            ackFuture.completeExceptionally(e);
+            return ackFuture;
+        }
+
+        // ---- Final guarantee: any path that didn't offer must fail-fast ----
+        if (!offered[0] && !ackFuture.isDone()) {
+            ackFuture.completeExceptionally(
+                    new IllegalStateException("WeCom channel transitioning, reply task rejected"));
+        }
+        return ackFuture;
     }
 
     // ==================== 媒体文件下载与 AES 解密 ====================
