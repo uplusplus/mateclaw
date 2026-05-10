@@ -96,8 +96,47 @@ public class ChannelMessageRouter {
     /** 每个渠道的队列容量 */
     private static final int QUEUE_CAPACITY = 1000;
 
-    /** 防抖等待时间（毫秒） */
-    private static final long DEBOUNCE_MS = 500;
+    /** 防抖等待时间（毫秒）。Package-private for unit-test access. */
+    static final long DEBOUNCE_MS = 500;
+
+    /**
+     * Extended debounce window for suspected paste-split scenarios. WeCom
+     * (and other IM clients) silently split a single pasted long prompt
+     * into 2-4 separate messages when it exceeds the per-frame limit
+     * (~2000 chars). The fragments arrive 0.5-2s apart, which means the
+     * default {@link #DEBOUNCE_MS} flushes the first fragment before the
+     * second one arrives — the agent then sees a torn context, calls the
+     * LLM on a partial prompt, and gets re-triggered when the next
+     * fragment lands. When merged content exceeds
+     * {@link #LONG_TEXT_THRESHOLD} we extend the window so the merger has
+     * time to absorb the rest.
+     * <p>
+     * Package-private for unit-test access.
+     */
+    static final long LONG_DEBOUNCE_MS = 2500;
+
+    /**
+     * Content length (chars) above which we treat the message as a likely
+     * paste-split fragment. 1500 sits below the typical ~2000-char IM
+     * client split point while staying well above any normally-typed
+     * message, so the long-debounce path doesn't penalize ordinary
+     * chatting. A short typed "hello" still flushes in 500ms.
+     * <p>
+     * Package-private for unit-test access.
+     */
+    static final int LONG_TEXT_THRESHOLD = 1500;
+
+    /**
+     * Pick the debounce window: extend to {@link #LONG_DEBOUNCE_MS} when
+     * either the new arrival or the accumulated merged buffer looks like
+     * a paste-split fragment, otherwise stay at {@link #DEBOUNCE_MS}.
+     * <p>
+     * Package-private + static so tests can pin the threshold without
+     * spinning up the whole router (which has 12+ injected dependencies).
+     */
+    static long pickDebounceMs(int currentMergedLength) {
+        return currentMergedLength > LONG_TEXT_THRESHOLD ? LONG_DEBOUNCE_MS : DEBOUNCE_MS;
+    }
 
     /**
      * Plan-Execute SSE events that the Web Console mirror needs to see when
@@ -223,7 +262,11 @@ public class ChannelMessageRouter {
         log.info("[{}] Enqueuing message: sender={}, conversationId={}, agentId={}",
                 channelType, message.getSenderId(), conversationId, agentId);
 
-        // 防抖：同一会话 500ms 内的连续消息合并
+        // Debounce + adaptive merge: same conversation messages within the
+        // (500ms / 2.5s) window get concatenated into one. Adaptive: when
+        // the merged buffer crosses the LONG_TEXT_THRESHOLD we extend to
+        // LONG_DEBOUNCE_MS so paste-split fragments arrive together
+        // instead of triggering one agent call per piece.
         synchronized (pendingMessages) {
             PendingMessage existing = pendingMessages.get(conversationId);
             if (existing != null) {
@@ -232,18 +275,31 @@ public class ChannelMessageRouter {
                     existing.timer.cancel(false);
                 }
                 existing.appendContent(message.getContent());
+                int mergedLen = existing.getMergedContent().length();
+                long debounceMs = pickDebounceMs(mergedLen);
                 existing.timer = debounceScheduler.schedule(
-                        () -> flushPending(conversationId), DEBOUNCE_MS, TimeUnit.MILLISECONDS);
-                log.debug("[{}] Message merged with pending (debounce): conversationId={}",
-                        channelType, conversationId);
+                        () -> flushPending(conversationId), debounceMs, TimeUnit.MILLISECONDS);
+                if (debounceMs > DEBOUNCE_MS) {
+                    log.info("[{}] Long-text merger active: conversationId={}, mergedLen={}, debounce={}ms (paste-split suspected)",
+                            channelType, conversationId, mergedLen, debounceMs);
+                } else {
+                    log.debug("[{}] Message merged with pending (debounce {}ms): conversationId={}",
+                            channelType, debounceMs, conversationId);
+                }
                 return;
             }
 
             // 首条消息，创建 PendingMessage 并设定防抖定时器
             PendingMessage pending = new PendingMessage(message, adapter, channelEntity);
             pendingMessages.put(conversationId, pending);
+            int firstLen = message.getContent() != null ? message.getContent().length() : 0;
+            long debounceMs = pickDebounceMs(firstLen);
             pending.timer = debounceScheduler.schedule(
-                    () -> flushPending(conversationId), DEBOUNCE_MS, TimeUnit.MILLISECONDS);
+                    () -> flushPending(conversationId), debounceMs, TimeUnit.MILLISECONDS);
+            if (debounceMs > DEBOUNCE_MS) {
+                log.info("[{}] Long-text merger armed on first message: conversationId={}, len={}, debounce={}ms",
+                        channelType, conversationId, firstLen, debounceMs);
+            }
         }
     }
 
