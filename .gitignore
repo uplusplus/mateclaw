@@ -98,6 +98,7 @@ CLAUDE.md
 
 # Codex CLI local artifacts
 .codex/
+.superpowers/
 
 # Sync tooling local state (generated each run; report is intentionally tracked)
 scripts/.*-sync-state.json
