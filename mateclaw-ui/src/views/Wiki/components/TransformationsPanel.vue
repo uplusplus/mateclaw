@@ -87,9 +87,29 @@
         </div>
 
         <div v-if="runsByTemplate[tpl.id]?.length" class="runs-list">
-          <div class="runs-title">{{ t('wiki.transformations.runs') }}</div>
+          <div class="runs-head-row">
+            <div class="runs-title">{{ t('wiki.transformations.runs') }}</div>
+            <button
+              v-if="selectedForCompare[tpl.id]?.length === 2"
+              class="btn-secondary btn-compare"
+              @click="openCompare(tpl)"
+            >
+              {{ t('wiki.transformations.compareBtn') }} ({{ selectedForCompare[tpl.id].length }})
+            </button>
+            <span v-else-if="selectedForCompare[tpl.id]?.length === 1" class="compare-hint">
+              {{ t('wiki.transformations.compareHint') }}
+            </span>
+          </div>
           <details v-for="run in runsByTemplate[tpl.id]" :key="run.id" class="run-item">
             <summary>
+              <input
+                v-if="run.status === 'completed'"
+                type="checkbox"
+                class="compare-check"
+                :checked="isSelectedForCompare(tpl.id, run.id)"
+                @click.stop="toggleCompareSelect(tpl.id, run.id)"
+                :title="t('wiki.transformations.compareCheckTip')"
+              />
               <span class="run-status" :class="`run-status--${run.status}`">{{ run.status }}</span>
               <span class="run-meta">
                 {{ rawTitleFor(run.rawId) }}
@@ -260,6 +280,39 @@
         </div>
       </div>
     </div>
+
+    <!-- Compare modal: shows two completed runs side-by-side. -->
+    <div v-if="compareOpen" class="modal-overlay" @click.self="closeCompare">
+      <div class="modal modal--compare">
+        <div class="modal-head">
+          <h3>{{ t('wiki.transformations.compareTitle') }}</h3>
+          <button class="modal-close" @click="closeCompare">×</button>
+        </div>
+        <div class="modal-body compare-body">
+          <article v-for="(run, idx) in compareRuns" :key="run?.id ?? idx" class="compare-col">
+            <header class="compare-col-head">
+              <div class="compare-col-title">Run #{{ run?.id }}</div>
+              <div class="compare-col-meta">
+                <span>{{ formatTimestamp(run?.completedAt || run?.startedAt || run?.createTime || null) }}</span>
+                <span class="dot"></span>
+                <span>{{ formatDuration(run?.durationMs ?? null) }}</span>
+                <span v-if="run?.totalTokens" class="dot"></span>
+                <span v-if="run?.totalTokens">
+                  {{ formatTokens(run.inputTokens) }}↑ / {{ formatTokens(run.outputTokens) }}↓
+                </span>
+              </div>
+              <div class="compare-col-source">
+                {{ run?.inputKind === 'page' ? 'page' : 'raw' }} · {{ run?.rawId != null ? rawTitleFor(run.rawId) : ('page#' + run?.pageId) }}
+              </div>
+            </header>
+            <pre class="compare-col-output">{{ run?.output ?? '' }}</pre>
+          </article>
+        </div>
+        <div class="modal-actions">
+          <button class="btn-secondary" @click="closeCompare">{{ t('wiki.transformations.cancelBtn') }}</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -325,6 +378,10 @@ const savingRunId = ref<number | null>(null)
 const cancellingRunId = ref<number | null>(null)
 const rerunningRunId = ref<number | null>(null)
 const aggregatingTemplateId = ref<number | null>(null)
+// Map of templateId → up-to-2 run IDs the user has ticked for side-by-side compare.
+const selectedForCompare = ref<Record<number, number[]>>({})
+const compareOpen = ref(false)
+const compareRuns = ref<(WikiTransformationRun | undefined)[]>([])
 interface ModelOption { id: number; name: string; provider: string; modelName: string }
 const availableModels = ref<ModelOption[]>([])
 
@@ -557,6 +614,43 @@ async function onSaveRunAsPage(tpl: WikiTransformation, run: WikiTransformationR
   }
 }
 
+function isSelectedForCompare(tplId: number, runId: number): boolean {
+  return (selectedForCompare.value[tplId] || []).includes(runId)
+}
+
+function toggleCompareSelect(tplId: number, runId: number) {
+  const existing = selectedForCompare.value[tplId] || []
+  if (existing.includes(runId)) {
+    selectedForCompare.value[tplId] = existing.filter((id) => id !== runId)
+    return
+  }
+  if (existing.length >= 2) {
+    // Sliding window: drop the oldest selection to make room for the new pick.
+    selectedForCompare.value[tplId] = [existing[1], runId]
+  } else {
+    selectedForCompare.value[tplId] = [...existing, runId]
+  }
+}
+
+function openCompare(tpl: WikiTransformation) {
+  const ids = selectedForCompare.value[tpl.id] || []
+  if (ids.length !== 2) return
+  const runs = runsByTemplate.value[tpl.id] || []
+  // Order chronologically (older first) so left = before, right = after.
+  const picked = ids
+    .map((id) => runs.find((r) => r.id === id))
+    .filter((r): r is WikiTransformationRun => !!r)
+    .sort((a, b) => new Date(a.createTime).getTime() - new Date(b.createTime).getTime())
+  if (picked.length !== 2) return
+  compareRuns.value = picked
+  compareOpen.value = true
+}
+
+function closeCompare() {
+  compareOpen.value = false
+  compareRuns.value = []
+}
+
 async function onAggregate(tpl: WikiTransformation) {
   if (!store.currentKB) return
   aggregatingTemplateId.value = tpl.id
@@ -736,7 +830,11 @@ onMounted(async () => {
 }
 
 .runs-list { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px dashed var(--mc-border-light); }
-.runs-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--mc-text-tertiary); }
+.runs-head-row { display: flex; align-items: center; gap: 10px; }
+.runs-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--mc-text-tertiary); flex: 1; }
+.btn-compare { font-size: 12px; padding: 4px 12px; }
+.compare-hint { font-size: 11px; color: var(--mc-text-tertiary); }
+.compare-check { margin-right: 6px; accent-color: var(--mc-primary); cursor: pointer; }
 .run-item summary {
   cursor: pointer;
   display: flex;
@@ -814,6 +912,40 @@ onMounted(async () => {
   max-height: 90vh;
   overflow: hidden;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+}
+.modal--compare { width: min(1200px, 96vw); }
+.compare-body { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 14px 16px; overflow-y: auto; }
+.compare-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.compare-col-head {
+  background: var(--mc-bg-muted);
+  border: 1px solid var(--mc-border-light);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.compare-col-title { font-size: 13px; font-weight: 600; color: var(--mc-text-primary); }
+.compare-col-meta { font-size: 11px; color: var(--mc-text-secondary); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.compare-col-source { font-size: 11px; color: var(--mc-text-tertiary); font-family: var(--mc-font-mono, ui-monospace, Menlo, monospace); }
+.compare-col-output {
+  flex: 1;
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--mc-bg);
+  border: 1px solid var(--mc-border-light);
+  border-radius: 10px;
+  font-family: var(--mc-font-mono, ui-monospace, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--mc-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: auto;
+  min-height: 360px;
+}
+@media (max-width: 900px) {
+  .compare-body { grid-template-columns: 1fr; }
 }
 .modal-head {
   display: flex;
