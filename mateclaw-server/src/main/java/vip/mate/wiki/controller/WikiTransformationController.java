@@ -102,10 +102,10 @@ public class WikiTransformationController {
     // ==================== Apply ====================
 
     @RequireWorkspaceRole("member")
-    @Operation(summary = "Run a transformation against a raw material",
-               description = "Set sync=true to block until the LLM call returns "
-                           + "(the response carries the populated run). "
-                           + "When false (default) the call returns immediately with the pending run row.")
+    @Operation(summary = "Run a transformation against a raw material or wiki page",
+               description = "Body accepts exactly one of {rawId, pageId}. Set sync=true to block "
+                           + "until the LLM call returns; when false (default) the call returns "
+                           + "immediately with the pending run row.")
     @PostMapping("/{id}/apply")
     public R<WikiTransformationRunEntity> apply(@PathVariable Long id,
                                                  @RequestBody Map<String, Object> body,
@@ -116,16 +116,23 @@ public class WikiTransformationController {
         verifyTemplateWorkspace(t, workspaceId);
 
         Object rawIdRaw = body == null ? null : body.get("rawId");
-        if (rawIdRaw == null) {
-            return R.fail("rawId is required");
+        Object pageIdRaw = body == null ? null : body.get("pageId");
+        if (rawIdRaw == null && pageIdRaw == null) {
+            return R.fail("One of rawId / pageId is required");
         }
-        Long rawId = Long.valueOf(rawIdRaw.toString());
+        if (rawIdRaw != null && pageIdRaw != null) {
+            return R.fail("Pass only one of rawId / pageId, not both");
+        }
 
-        if (sync) {
-            return R.ok(executor.runOnRawSync(t, rawId, "manual"));
+        if (rawIdRaw != null) {
+            Long rawId = Long.valueOf(rawIdRaw.toString());
+            if (sync) return R.ok(executor.runOnRawSync(t, rawId, "manual"));
+            executor.runOnRawAsync(t, rawId, "manual");
+        } else {
+            Long pageId = Long.valueOf(pageIdRaw.toString());
+            if (sync) return R.ok(executor.runOnPageSync(t, pageId, "manual"));
+            executor.runOnPageAsync(t, pageId, "manual");
         }
-        executor.runOnRawAsync(t, rawId, "manual");
-        // Async path — caller polls /runs to see the result land.
         return R.ok();
     }
 

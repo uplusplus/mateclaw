@@ -93,6 +93,141 @@ public class WikiTransformationExecutor {
                 () -> runOnRawSync(transformation, rawId, triggeredBy), WORKER);
     }
 
+    public CompletableFuture<WikiTransformationRunEntity> runOnPageAsync(
+            WikiTransformationEntity transformation, Long pageId, String triggeredBy) {
+        return CompletableFuture.supplyAsync(
+                () -> runOnPageSync(transformation, pageId, triggeredBy), WORKER);
+    }
+
+    /**
+     * Run the transformation against an existing wiki page (e.g. a previous
+     * synthesis page or a manually-authored page). Mirrors
+     * {@link #runOnRawSync} but uses page content as the source. Output is
+     * not auto-saved as a wiki page even when the template has
+     * {@code outputTarget=page} — overwriting the input page would be
+     * surprising; users can still save manually from the run history.
+     */
+    public WikiTransformationRunEntity runOnPageSync(
+            WikiTransformationEntity transformation, Long pageId, String triggeredBy) {
+        if (transformation == null) {
+            throw new IllegalArgumentException("transformation is required");
+        }
+        if (pageId == null) {
+            throw new IllegalArgumentException("pageId is required");
+        }
+        if (pageService == null) {
+            throw new IllegalStateException("Page service unavailable");
+        }
+        WikiPageEntity page = pageService.getById(pageId);
+        if (page == null) {
+            throw new IllegalArgumentException("Page not found: " + pageId);
+        }
+        if (Boolean.FALSE.equals(transformation.getEnabled())) {
+            log.debug("[WikiTransformation] skipping disabled template id={} name={}",
+                    transformation.getId(), transformation.getName());
+            return null;
+        }
+
+        long startNanos = System.nanoTime();
+        WikiTransformationRunEntity run = new WikiTransformationRunEntity();
+        run.setTransformationId(transformation.getId());
+        run.setKbId(page.getKbId());
+        run.setWorkspaceId(transformation.getWorkspaceId());
+        run.setInputKind("page");
+        run.setPageId(pageId);
+        run.setStatus("running");
+        run.setTriggeredBy(triggeredBy == null ? "manual" : triggeredBy);
+        run.setStartedAt(LocalDateTime.now());
+        transformationService.insertRun(run);
+
+        try {
+            String inputText = page.getContent();
+            if (inputText == null || inputText.isBlank()) {
+                throw new IllegalStateException("Page has no content");
+            }
+            String output = renderAndCallLlm(transformation, page.getKbId(),
+                    page.getTitle() == null ? ("page#" + pageId) : page.getTitle(),
+                    inputText, run);
+
+            WikiTransformationRunEntity current = transformationService.getRun(run.getId());
+            if (current != null && "cancelled".equalsIgnoreCase(current.getStatus())) {
+                log.info("[WikiTransformation] run={} was cancelled mid-flight; discarding {} chars of LLM output",
+                        run.getId(), output.length());
+                return current;
+            }
+
+            run.setOutput(output);
+            run.setStatus("completed");
+            run.setCompletedAt(LocalDateTime.now());
+            run.setDurationMs(Duration.ofNanos(System.nanoTime() - startNanos).toMillis());
+            // For page input we never auto-save back to a page — the call site
+            // can use the manual save-as-page endpoint with a derived slug.
+            transformationService.updateRun(run);
+
+            metrics.recordCompileStage("transformation_run", page.getKbId(),
+                    Duration.ofNanos(System.nanoTime() - startNanos));
+            log.info("[WikiTransformation] ok run={} transformation={} pageId={} kbId={} ({} ms)",
+                    run.getId(), transformation.getName(), pageId, page.getKbId(),
+                    run.getDurationMs());
+        } catch (Exception e) {
+            WikiTransformationRunEntity current = transformationService.getRun(run.getId());
+            if (current != null && "cancelled".equalsIgnoreCase(current.getStatus())) {
+                log.info("[WikiTransformation] run={} was cancelled before failure could be recorded ({})",
+                        run.getId(), e.getMessage());
+                return current;
+            }
+            run.setStatus("failed");
+            String msg = e.getMessage();
+            run.setError(msg == null ? e.getClass().getSimpleName() : msg);
+            run.setCompletedAt(LocalDateTime.now());
+            run.setDurationMs(Duration.ofNanos(System.nanoTime() - startNanos).toMillis());
+            transformationService.updateRun(run);
+            log.warn("[WikiTransformation] failed run={} transformation={} pageId={}: {}",
+                    run.getId(), transformation.getName(), pageId, msg);
+        }
+        return run;
+    }
+
+    /**
+     * Shared prompt-render + LLM-call + output-cleanup stage used by both
+     * raw-input and page-input entry points. Sets {@code run.modelId} as a
+     * side-effect so the run row reflects which model produced the output.
+     */
+    private String renderAndCallLlm(WikiTransformationEntity transformation, Long kbId,
+                                     String sourceTitle, String sourceText,
+                                     WikiTransformationRunEntity run) {
+        String trimmedInput = sourceText.length() > MAX_INPUT_CHARS
+                ? sourceText.substring(0, MAX_INPUT_CHARS) + "\n…(truncated)"
+                : sourceText;
+
+        String systemPrompt = PromptLoader.loadPrompt("wiki/transformation-system");
+        String instruction = (transformation.getPromptTemplate() == null ? "" : transformation.getPromptTemplate())
+                .replace("{input_text}", trimmedInput)
+                .replace("{title}", sourceTitle);
+        String userPrompt = PromptLoader.loadPrompt("wiki/transformation-user")
+                .replace("{instruction}", instruction)
+                .replace("{source_title}", sourceTitle)
+                .replace("{source_text}", trimmedInput);
+
+        Long resolvedModelId = resolveModelId(transformation, kbId);
+        ChatModel chatModel = buildChatModel(resolvedModelId);
+        run.setModelId(resolvedModelId);
+
+        ChatResponse resp = chatModel.call(new Prompt(List.of(
+                new SystemMessage(systemPrompt), new UserMessage(userPrompt))));
+        String rawOutput = (resp == null || resp.getResult() == null
+                || resp.getResult().getOutput() == null)
+                ? null : resp.getResult().getOutput().getText();
+        if (rawOutput == null || rawOutput.isBlank()) {
+            throw new IllegalStateException("LLM returned empty output");
+        }
+        String output = cleanLlmOutput(rawOutput);
+        if (output.isBlank()) {
+            throw new IllegalStateException("LLM output was empty after cleanup");
+        }
+        return output;
+    }
+
     /**
      * Run the transformation against the given raw material and persist
      * the outcome. The returned entity is the persisted run row, regardless
@@ -134,32 +269,8 @@ public class WikiTransformationExecutor {
             if (inputText == null || inputText.isBlank()) {
                 throw new IllegalStateException("Raw material has no extractable text yet");
             }
-            String trimmedInput = inputText.length() > MAX_INPUT_CHARS
-                    ? inputText.substring(0, MAX_INPUT_CHARS) + "\n…(truncated)"
-                    : inputText;
-
-            String systemPrompt = PromptLoader.loadPrompt("wiki/transformation-system");
-            String userPrompt = PromptLoader.loadPrompt("wiki/transformation-user")
-                    .replace("{instruction}", renderTemplate(transformation.getPromptTemplate(), raw, trimmedInput))
-                    .replace("{source_title}", safeTitle(raw))
-                    .replace("{source_text}", trimmedInput);
-
-            Long resolvedModelId = resolveModelId(transformation, raw.getKbId());
-            ChatModel chatModel = buildChatModel(resolvedModelId);
-            run.setModelId(resolvedModelId);
-
-            ChatResponse resp = chatModel.call(new Prompt(List.of(
-                    new SystemMessage(systemPrompt), new UserMessage(userPrompt))));
-            String rawOutput = (resp == null || resp.getResult() == null
-                    || resp.getResult().getOutput() == null)
-                    ? null : resp.getResult().getOutput().getText();
-            if (rawOutput == null || rawOutput.isBlank()) {
-                throw new IllegalStateException("LLM returned empty output");
-            }
-            String output = cleanLlmOutput(rawOutput);
-            if (output.isBlank()) {
-                throw new IllegalStateException("LLM output was empty after cleanup");
-            }
+            String output = renderAndCallLlm(transformation, raw.getKbId(),
+                    safeTitle(raw), inputText, run);
             // Honour a mid-flight cancel: the cancel endpoint flipped the run
             // row to 'cancelled' while the LLM was still working. Drop the
             // output and stop here rather than overwrite the cancelled state.
@@ -232,14 +343,6 @@ public class WikiTransformationExecutor {
         transformationService.updateRun(run);
         log.info("[WikiTransformation] run={} cancelled by user", runId);
         return true;
-    }
-
-    private String renderTemplate(String template, WikiRawMaterialEntity raw, String inputText) {
-        if (template == null) return "";
-        String result = template;
-        result = result.replace("{input_text}", inputText);
-        result = result.replace("{title}", safeTitle(raw));
-        return result;
     }
 
     private Long resolveModelId(WikiTransformationEntity transformation, Long kbId) {

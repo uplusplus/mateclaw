@@ -713,6 +713,55 @@ public class WikiTool {
         }
     }
 
+    @Tool(description = """
+            Run a transformation template against an existing wiki page and return
+            the generated text. Use this when you want to derive a new artifact
+            from an existing page — e.g. "summarize the contract-review page",
+            "extract action items from this meeting-notes page". The run output
+            is persisted in the wiki UI; pass slug (not page id) for convenience.
+            """)
+    public String wiki_apply_transformation_to_page(
+            @ToolParam(description = "Agent ID") Long agentId,
+            @ToolParam(description = "Transformation name (from wiki_list_transformations)") String name,
+            @ToolParam(description = "Source wiki page slug to run the transformation against") String slug) {
+        if (name == null || name.isBlank()) return error("name is required");
+        if (slug == null || slug.isBlank()) return error("slug is required");
+        Long kbId = resolveKbId(agentId);
+        if (kbId == null) return error("No wiki knowledge base found for this agent");
+        if (transformationService == null || transformationExecutor == null) {
+            return error("Transformations not available");
+        }
+
+        WikiPageEntity page = pageService.getBySlug(kbId, slug);
+        if (page == null) return error("Page not found: " + slug);
+
+        WikiKnowledgeBaseEntity kb = kbService.getById(kbId);
+        Long wsId = (kb == null || kb.getWorkspaceId() == null) ? 1L : kb.getWorkspaceId();
+
+        WikiTransformationEntity template = transformationService.findByName(kbId, wsId, name).orElse(null);
+        if (template == null) return error("Transformation not found: " + name);
+
+        try {
+            WikiTransformationRunEntity run = transformationExecutor.runOnPageSync(template, page.getId(), "agent_tool");
+            if (run == null) return error("Transformation is disabled: " + name);
+            if ("failed".equals(run.getStatus())) {
+                return error("Transformation failed: " + run.getError());
+            }
+            return JSONUtil.createObj()
+                    .set("ok", true)
+                    .set("runId", run.getId())
+                    .set("transformation", template.getName())
+                    .set("inputPage", slug)
+                    .set("output", run.getOutput())
+                    .toString();
+        } catch (IllegalStateException | IllegalArgumentException e) {
+            return error(e.getMessage());
+        } catch (Exception e) {
+            log.warn("[WikiTool] wiki_apply_transformation_to_page failed: {}", e.getMessage());
+            return error("Apply failed: " + e.getMessage());
+        }
+    }
+
     // ==================== Helpers ====================
 
     private Long resolveKbId(Long agentId) {
