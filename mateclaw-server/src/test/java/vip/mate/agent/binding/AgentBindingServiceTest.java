@@ -286,6 +286,54 @@ class AgentBindingServiceTest {
                 "validation 必须在 delete 旧绑定之前完成，否则会留下空绑定状态");
     }
 
+    /**
+     * Seed a connected MCP server with one cached tool so
+     * {@link vip.mate.tool.service.AvailableToolService#listAvailable()}
+     * returns at least one bindable MCP row.
+     */
+    private void seedMcpServerWithOneTool(long id, String serverName, String rawToolName) {
+        String toolsCacheJson = "[{\"name\":\"" + rawToolName + "\",\"description\":\"fixture\"}]";
+        jdbcTemplate.update(
+                "MERGE INTO mate_mcp_server (id, name, description, transport, enabled, " +
+                        "connect_timeout_seconds, read_timeout_seconds, last_status, tool_count, " +
+                        "builtin, tools_cache_json, create_time, update_time, deleted) " +
+                        "KEY(id) VALUES (?, ?, '', 'stdio', TRUE, 30, 30, 'connected', 1, FALSE, ?, " +
+                        "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0)",
+                id, serverName, toolsCacheJson);
+    }
+
+    @Test
+    @DisplayName("Issue #108: 绑定任意 builtin tool 后，enabled MCP 工具仍自动出现在 effective allowlist")
+    void mcpToolsAutoIncludedWhenAnyBindingExists() {
+        // Reproduce the user-reported scenario: agent has one built-in tool
+        // bound (e.g. by template), no MCP tools ticked. Before the fix this
+        // returned a whitelist that excluded every MCP tool; after the fix
+        // MCP tools auto-join the allowlist.
+        seedBuiltinTool("builtin_probe");
+        seedMcpServerWithOneTool(8_888_001L, "issue108-server", "search_web");
+        bindingService.setToolBindings(agentId, List.of("builtin_probe"));
+
+        Set<String> effective = bindingService.getEffectiveToolNames(agentId);
+        assertNotNull(effective, "binding 非空时应返回 allowlist（非 null）");
+        assertTrue(effective.contains("builtin_probe"), "用户显式勾选的工具必须在 allowlist 中");
+        boolean hasMcpEntry = effective.stream().anyMatch(n -> n != null && n.startsWith("mcp_"));
+        assertTrue(hasMcpEntry,
+                "enabled MCP server 的工具必须自动并入 allowlist；缺失会让用户在 chat 时只见到 built-in 工具，"
+                        + "即 issue #108 描述的现象。实际 allowlist: " + effective);
+    }
+
+    @Test
+    @DisplayName("Issue #108: agent 完全没绑定时 effective allowlist 返回 null（不要意外改成 strict）")
+    void noBindingsStillReturnsNull() {
+        // The auto-union must not flip the three-state contract: an agent
+        // with zero bindings still means "no agent-level restriction".
+        seedMcpServerWithOneTool(8_888_002L, "issue108-no-binding-server", "search_web");
+
+        Set<String> effective = bindingService.getEffectiveToolNames(agentId);
+        assertNull(effective, "完全没有 skill / tool 绑定时必须返回 null（= 不过滤），"
+                + "否则 AgentToolSet.withAllowedToolsOnly 会变成空集禁掉所有工具");
+    }
+
     @Test
     @DisplayName("unbindTool 后 DB 里真的没行（物理 delete，不是软删留 deleted=1）")
     void unbindPhysicallyRemovesRow() {

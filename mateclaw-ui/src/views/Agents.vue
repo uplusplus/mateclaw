@@ -382,7 +382,22 @@
               <div v-else-if="filteredAvailableToolGroups.length === 0" class="binding-empty binding-empty--compact">{{ t('agents.binding.noMatchingTools') }}</div>
               <div v-else class="binding-list">
                 <template v-for="group in filteredAvailableToolGroups" :key="group.groupId">
-                  <div class="binding-group-header">{{ group.label }}</div>
+                  <div class="binding-group-header">
+                    <span>{{ group.label }}</span>
+                    <!-- MCP groups: ticking is now record-only — enabled MCP
+                         tools auto-join the agent's effective allowlist
+                         (server is admin-enabled at the system level). Tell
+                         the user that here so they don't think unchecked
+                         MCP rows are disabled. To deny a specific MCP tool,
+                         users still have Security → Tool Guard. -->
+                    <span
+                      v-if="group.groupId && group.groupId.startsWith('mcp:')"
+                      class="binding-group-note"
+                      :title="t('agents.binding.mcpAutoIncludedTooltip')"
+                    >
+                      {{ t('agents.binding.mcpAutoIncludedBadge') }}
+                    </span>
+                  </div>
                   <label
                     v-for="tool in group.tools"
                     :key="tool.rowId || `${group.groupId}#${tool.rawName}#${tool.name}`"
@@ -1457,6 +1472,19 @@ html.dark .live-pill {
 .advanced-tools-count { padding: 1px 8px; background: var(--mc-primary-bg); color: var(--mc-primary); border-radius: 999px; font-size: 11px; font-weight: 700; }
 .advanced-tools-chevron { color: var(--mc-text-tertiary); font-size: 12px; }
 .advanced-tools-note { font-style: italic; color: var(--mc-text-tertiary); margin-top: 4px; }
+
+/* MCP group header: inline "auto-available" tag next to the label so users
+   know enabled MCP tools work without being ticked. */
+.binding-group-header { display: flex; align-items: center; gap: 8px; }
+.binding-group-note {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--mc-primary) 12%, transparent);
+  color: var(--mc-primary);
+  cursor: help;
+}
 
 /* Icon picker trigger — replaces the old free-text icon input. Tile shape
  * mirrors SkillMarket's identity-icon-row so the create/edit affordance
