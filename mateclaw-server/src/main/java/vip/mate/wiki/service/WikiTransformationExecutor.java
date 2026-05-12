@@ -150,6 +150,16 @@ public class WikiTransformationExecutor {
             if (output == null || output.isBlank()) {
                 throw new IllegalStateException("LLM returned empty output");
             }
+            // Honour a mid-flight cancel: the cancel endpoint flipped the run
+            // row to 'cancelled' while the LLM was still working. Drop the
+            // output and stop here rather than overwrite the cancelled state.
+            WikiTransformationRunEntity current = transformationService.getRun(run.getId());
+            if (current != null && "cancelled".equalsIgnoreCase(current.getStatus())) {
+                log.info("[WikiTransformation] run={} was cancelled mid-flight; discarding {} chars of LLM output",
+                        run.getId(), output.length());
+                return current;
+            }
+
             run.setOutput(output);
             run.setStatus("completed");
             run.setCompletedAt(LocalDateTime.now());
@@ -175,6 +185,12 @@ public class WikiTransformationExecutor {
                     run.getId(), transformation.getName(), rawId, raw.getKbId(),
                     run.getDurationMs(), run.getOutputPageId());
         } catch (Exception e) {
+            WikiTransformationRunEntity current = transformationService.getRun(run.getId());
+            if (current != null && "cancelled".equalsIgnoreCase(current.getStatus())) {
+                log.info("[WikiTransformation] run={} was cancelled before failure could be recorded ({})",
+                        run.getId(), e.getMessage());
+                return current;
+            }
             run.setStatus("failed");
             String msg = e.getMessage();
             run.setError(msg == null ? e.getClass().getSimpleName() : msg);
@@ -185,6 +201,27 @@ public class WikiTransformationExecutor {
                     run.getId(), transformation.getName(), rawId, msg);
         }
         return run;
+    }
+
+    /**
+     * Mark a still-active run as cancelled. The blocked LLM call (if any)
+     * continues server-side but its eventual output is dropped by the
+     * post-call check in {@link #runOnRawSync}.
+     */
+    public boolean cancelRun(Long runId) {
+        if (runId == null) return false;
+        WikiTransformationRunEntity run = transformationService.getRun(runId);
+        if (run == null) return false;
+        String status = run.getStatus();
+        if (!"pending".equalsIgnoreCase(status) && !"running".equalsIgnoreCase(status)) {
+            return false;
+        }
+        run.setStatus("cancelled");
+        run.setCompletedAt(LocalDateTime.now());
+        if (run.getError() == null) run.setError("Cancelled by user");
+        transformationService.updateRun(run);
+        log.info("[WikiTransformation] run={} cancelled by user", runId);
+        return true;
     }
 
     private String renderTemplate(String template, WikiRawMaterialEntity raw, String inputText) {

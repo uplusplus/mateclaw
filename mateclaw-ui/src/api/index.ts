@@ -715,6 +715,8 @@ export const wikiApi = {
     http.delete(`/wiki/transformations/runs/${runId}`),
   saveTransformationRunAsPage: (runId: number) =>
     http.post(`/wiki/transformations/runs/${runId}/save-as-page`),
+  cancelTransformationRun: (runId: number) =>
+    http.post(`/wiki/transformations/runs/${runId}/cancel`),
 }
 
 // ==================== Workspace (Team) ====================

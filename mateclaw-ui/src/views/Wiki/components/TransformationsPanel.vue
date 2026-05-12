@@ -109,11 +109,36 @@
                 >
                   {{ t('wiki.transformations.openPage') }}
                 </button>
+                <button class="btn-secondary" :disabled="rerunningRunId === run.id" @click="onRerun(tpl, run)">
+                  {{ rerunningRunId === run.id
+                      ? t('wiki.transformations.rerunning')
+                      : t('wiki.transformations.rerunBtn') }}
+                </button>
               </div>
               <div class="run-output">{{ run.output }}</div>
             </template>
-            <div v-else-if="run.status === 'failed'" class="run-error">{{ run.error }}</div>
-            <div v-else class="run-output run-output--muted">{{ t('wiki.transformations.running') }}</div>
+            <template v-else-if="run.status === 'failed' || run.status === 'cancelled'">
+              <div class="run-actions">
+                <button class="btn-secondary" :disabled="rerunningRunId === run.id" @click="onRerun(tpl, run)">
+                  {{ rerunningRunId === run.id
+                      ? t('wiki.transformations.rerunning')
+                      : t('wiki.transformations.rerunBtn') }}
+                </button>
+              </div>
+              <div class="run-error">{{ run.error }}</div>
+            </template>
+            <template v-else>
+              <div class="run-actions">
+                <button class="btn-secondary btn-danger"
+                        :disabled="cancellingRunId === run.id"
+                        @click="onCancelRun(tpl, run)">
+                  {{ cancellingRunId === run.id
+                      ? t('wiki.transformations.cancelling')
+                      : t('wiki.transformations.cancelRunBtn') }}
+                </button>
+              </div>
+              <div class="run-output run-output--muted">{{ t('wiki.transformations.running') }}</div>
+            </template>
           </details>
         </div>
       </article>
@@ -242,7 +267,7 @@ interface WikiTransformationRun {
   rawId: number | null
   pageId: number | null
   inputKind: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
   output: string | null
   error: string | null
   durationMs: number | null
@@ -268,6 +293,8 @@ const editorOpen = ref(false)
 const editing = ref<WikiTransformation | null>(null)
 const saving = ref(false)
 const savingRunId = ref<number | null>(null)
+const cancellingRunId = ref<number | null>(null)
+const rerunningRunId = ref<number | null>(null)
 interface ModelOption { id: number; name: string; provider: string; modelName: string }
 const availableModels = ref<ModelOption[]>([])
 
@@ -487,6 +514,32 @@ async function onSaveRunAsPage(tpl: WikiTransformation, run: WikiTransformationR
   }
 }
 
+async function onCancelRun(tpl: WikiTransformation, run: WikiTransformationRun) {
+  cancellingRunId.value = run.id
+  try {
+    await wikiApi.cancelTransformationRun(run.id)
+    ElMessage.success(t('wiki.transformations.cancelDone'))
+    await loadRunsFor(tpl.id)
+  } catch (e: any) {
+    ElMessage.error(e?.message ?? t('wiki.transformations.cancelFailed'))
+  } finally {
+    cancellingRunId.value = null
+  }
+}
+
+async function onRerun(tpl: WikiTransformation, run: WikiTransformationRun) {
+  if (!run.rawId) return
+  rerunningRunId.value = run.id
+  try {
+    await wikiApi.applyTransformation(tpl.id, run.rawId, true)
+    await loadRunsFor(tpl.id)
+  } catch (e: any) {
+    ElMessage.error(e?.message ?? t('wiki.transformations.runFailed'))
+  } finally {
+    rerunningRunId.value = null
+  }
+}
+
 async function onOpenSavedPage(run: WikiTransformationRun) {
   if (!run.outputPageId || !store.currentKB) return
   try {
@@ -640,6 +693,7 @@ onMounted(async () => {
 .run-status--completed { background: var(--el-color-success-light-9); color: var(--el-color-success); }
 .run-status--failed { background: var(--el-color-danger-light-9); color: var(--el-color-danger); }
 .run-status--running, .run-status--pending { background: var(--mc-bg-muted); color: var(--mc-text-secondary); }
+.run-status--cancelled { background: var(--mc-bg-muted); color: var(--mc-text-tertiary); }
 .run-meta { color: var(--mc-text-tertiary); }
 .run-output {
   margin-top: 6px;

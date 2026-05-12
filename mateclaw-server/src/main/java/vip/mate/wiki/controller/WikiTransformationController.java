@@ -167,6 +167,22 @@ public class WikiTransformationController {
     }
 
     @RequireWorkspaceRole("member")
+    @Operation(summary = "Cancel a still-running transformation run",
+               description = "Marks the run as cancelled so the executor drops the eventual LLM output. "
+                           + "The HTTP request to the model continues server-side because most providers "
+                           + "do not support cancellation; this endpoint affects bookkeeping only.")
+    @PostMapping("/runs/{runId}/cancel")
+    public R<Void> cancelRun(@PathVariable Long runId,
+                              @RequestHeader(value = "X-Workspace-Id", required = false) Long workspaceId) {
+        WikiTransformationRunEntity run = transformationService.getRun(runId);
+        if (run == null) return R.fail("Run not found");
+        verifyKBWorkspace(run.getKbId(), workspaceId != null ? workspaceId : 1L);
+        boolean cancelled = executor.cancelRun(runId);
+        if (!cancelled) return R.fail("Run is not running");
+        return R.ok();
+    }
+
+    @RequireWorkspaceRole("member")
     @Operation(summary = "Save a completed run's output as a synthesis wiki page",
                description = "Idempotent: re-saving an already-saved run updates the same page slug.")
     @PostMapping("/runs/{runId}/save-as-page")
