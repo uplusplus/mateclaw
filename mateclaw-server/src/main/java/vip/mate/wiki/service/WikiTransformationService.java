@@ -106,7 +106,9 @@ public class WikiTransformationService {
         entity.setPromptTemplate(input.getPromptTemplate());
         entity.setApplyDefault(Boolean.TRUE.equals(input.getApplyDefault()));
         entity.setEnabled(input.getEnabled() == null ? Boolean.TRUE : input.getEnabled());
-        entity.setModelId(input.getModelId());
+        // Treat negative values as the "clear / use default" sentinel so the
+        // create and update paths accept the same payload from the UI.
+        entity.setModelId(input.getModelId() != null && input.getModelId() < 0 ? null : input.getModelId());
         entity.setOutputTarget(normalizeOutputTarget(input.getOutputTarget()));
         transformationMapper.insert(entity);
         log.info("[WikiTransformation] created id={} name={} kbId={}",

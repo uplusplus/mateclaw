@@ -41,6 +41,9 @@
             <span v-if="tpl.outputTarget === 'page'" class="flag flag--on">
               {{ t('wiki.transformations.outputTargetPageBadge') }}
             </span>
+            <span v-if="tpl.modelId" class="flag flag--scope">
+              {{ modelLabelFor(tpl.modelId) }}
+            </span>
             <span class="flag" :class="{ 'flag--muted': tpl.enabled === false }">
               {{ tpl.enabled === false ? t('wiki.transformations.disabled') : t('wiki.transformations.enabled') }}
             </span>
@@ -155,6 +158,17 @@
           </label>
 
           <label class="field">
+            <span class="field-label">{{ t('wiki.transformations.modelLabel') }}</span>
+            <select v-model="form.modelId" class="field-input">
+              <option :value="null">{{ t('wiki.transformations.modelDefault') }}</option>
+              <option v-for="m in availableModels" :key="m.id" :value="m.id">
+                {{ m.name }} <span v-if="m.provider"> · {{ m.provider }}</span>
+              </option>
+            </select>
+            <span class="field-hint">{{ t('wiki.transformations.modelHelp') }}</span>
+          </label>
+
+          <label class="field">
             <span class="field-label">{{ t('wiki.transformations.prompt') }}</span>
             <textarea
               v-model="form.promptTemplate"
@@ -204,7 +218,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElIcon, ElMessage } from 'element-plus'
 import { Loading, WarningFilled } from '@element-plus/icons-vue'
-import { wikiApi } from '@/api/index'
+import { wikiApi, modelApi } from '@/api/index'
 import { useWikiStore, type WikiRawMaterial } from '@/stores/useWikiStore'
 
 interface WikiTransformation {
@@ -254,6 +268,9 @@ const editorOpen = ref(false)
 const editing = ref<WikiTransformation | null>(null)
 const saving = ref(false)
 const savingRunId = ref<number | null>(null)
+interface ModelOption { id: number; name: string; provider: string; modelName: string }
+const availableModels = ref<ModelOption[]>([])
+
 const form = reactive<{
   name: string
   title: string
@@ -262,6 +279,7 @@ const form = reactive<{
   applyDefault: boolean
   enabled: boolean
   outputTarget: 'none' | 'page'
+  modelId: number | null
 }>({
   name: '',
   title: '',
@@ -270,6 +288,7 @@ const form = reactive<{
   applyDefault: false,
   enabled: true,
   outputTarget: 'none',
+  modelId: null,
 })
 
 const completedRaws = computed<WikiRawMaterial[]>(() =>
@@ -282,6 +301,12 @@ function rawTitleFor(rawId: number | null): string {
   if (rawId == null) return '—'
   const r = store.rawMaterials.find((x) => x.id === rawId)
   return r?.title || `raw#${rawId}`
+}
+
+function modelLabelFor(modelId: number | null | undefined): string {
+  if (modelId == null) return ''
+  const m = availableModels.value.find((x) => x.id === modelId)
+  return m ? m.name : `model#${modelId}`
 }
 
 function formatTimestamp(iso: string | null): string {
@@ -305,7 +330,10 @@ async function loadAll() {
     selectedRawByTemplate.value = Object.fromEntries(
       templates.value.map((t) => [t.id, selectedRawByTemplate.value[t.id] ?? null])
     )
-    await Promise.all(templates.value.map((tpl) => loadRunsFor(tpl.id)))
+    await Promise.all([
+      ensureModelsLoaded(),
+      ...templates.value.map((tpl) => loadRunsFor(tpl.id)),
+    ])
   } catch (e: any) {
     error.value = e?.message ?? String(e)
   } finally {
@@ -322,6 +350,21 @@ async function loadRunsFor(templateId: number) {
   }
 }
 
+async function ensureModelsLoaded() {
+  if (availableModels.value.length > 0) return
+  try {
+    const res: any = await modelApi.listEnabled()
+    availableModels.value = (res?.data || []).map((m: any) => ({
+      id: m.id,
+      name: m.name,
+      provider: m.provider,
+      modelName: m.modelName,
+    }))
+  } catch {
+    // Empty list = picker only offers "default".
+  }
+}
+
 function openCreate() {
   editing.value = null
   form.name = ''
@@ -331,7 +374,9 @@ function openCreate() {
   form.applyDefault = false
   form.enabled = true
   form.outputTarget = 'none'
+  form.modelId = null
   editorOpen.value = true
+  ensureModelsLoaded()
 }
 
 function openEdit(tpl: WikiTransformation) {
@@ -343,7 +388,9 @@ function openEdit(tpl: WikiTransformation) {
   form.applyDefault = tpl.applyDefault
   form.enabled = tpl.enabled !== false
   form.outputTarget = tpl.outputTarget === 'page' ? 'page' : 'none'
+  form.modelId = tpl.modelId ?? null
   editorOpen.value = true
+  ensureModelsLoaded()
 }
 
 function closeEditor() {
@@ -360,6 +407,8 @@ async function onSave() {
   saving.value = true
   try {
     if (editing.value) {
+      // Update path: backend treats `-1` as "clear modelId"; null is skipped.
+      const updateModelId = form.modelId == null ? -1 : form.modelId
       await wikiApi.updateTransformation(editing.value.id, {
         title: form.title,
         description: form.description,
@@ -367,6 +416,7 @@ async function onSave() {
         applyDefault: form.applyDefault,
         enabled: form.enabled,
         outputTarget: form.outputTarget,
+        modelId: updateModelId,
       })
     } else {
       await wikiApi.createTransformation({
@@ -378,6 +428,7 @@ async function onSave() {
         applyDefault: form.applyDefault,
         enabled: form.enabled,
         outputTarget: form.outputTarget,
+        modelId: form.modelId,
       })
     }
     closeEditor()
