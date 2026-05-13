@@ -2222,7 +2222,8 @@ export default {
         agentPlaceholder: 'Select digital employee',
         agentMissing: 'Current digital employee is not in the list: {name}',
         promptTemplate: 'Prompt template',
-        promptPlaceholder: 'Hello {{ inputs.payload }}',
+        // promptPlaceholder is intentionally not localized — hardcoded in
+        // StepPropertyPanel so vue-i18n's parser never sees the Pebble braces.
         outputVar: 'Output variable',
         outputVarPlaceholder: 'data',
         outputContentType: 'Output type',
