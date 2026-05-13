@@ -464,12 +464,18 @@ public class ConversationWindowManager {
             boundaryMetadata.put("tailKept", recentMessages.size());
             boundaryMetadata.put("toolResultsSpilled", spillsThisTurn);
             boundaryMetadata.put("anchored", anchored);
+            Long summaryId = null;
             try {
-                conversationService.saveCompressionSummary(
+                summaryId = conversationService.saveCompressionSummaryReturningId(
                         conversationId, SUMMARY_PREFIX + summary, oldMessages.size(),
                         boundaryMetadata);
             } catch (Exception e) {
                 log.warn("[ConversationWindow] Failed to persist compression boundary: {}", e.getMessage());
+            }
+            if (summaryId != null) {
+                // Mirror the DB row's metadata: the SSE consumer needs the id
+                // to deep-link the boundary card without having to refetch.
+                boundaryMetadata.put("summaryId", summaryId);
             }
             broadcastCompactStatus(conversationId, "done", boundaryMetadata);
         } else if (summary != null && !summary.isBlank() && fromCache) {

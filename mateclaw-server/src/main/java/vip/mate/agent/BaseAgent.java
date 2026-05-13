@@ -241,13 +241,37 @@ public abstract class BaseAgent {
         // boundary's content is already folded into the newer summary. Walking
         // forward and breaking on the first boundary kept everything between
         // boundaries — the very redundancy compaction was supposed to remove.
+        boolean boundaryFoundInWindow = false;
         for (int i = history.size() - 1; i >= 0; i--) {
             MessageEntity msg = history.get(i);
             if ("system".equals(msg.getRole()) && isCompressionSummary(msg)) {
                 history = new ArrayList<>(history.subList(i, history.size()));
+                boundaryFoundInWindow = true;
                 log.info("[{}] Found latest compression boundary at index {}; loading {} messages forward",
                         agentName, i, history.size());
                 break;
+            }
+        }
+
+        // ===== Latest boundary may live OUTSIDE the recent window =====
+        // On a long conversation that compacted hours/days ago and has paged
+        // fewer than `windowSize` new messages since, `listRecentMessages`
+        // returns only the raw tail — the boundary sat at index 0 of the
+        // original list and never made it into `history`. Without prepending
+        // it, the model would forget the original goal even though we already
+        // paid the LLM cost to produce a structured summary.
+        if (!boundaryFoundInWindow && totalCount > windowSize) {
+            try {
+                MessageEntity latestBoundary = conversationService.findLatestCompressionBoundary(conversationId);
+                if (latestBoundary != null) {
+                    history = new ArrayList<>(history);
+                    history.add(0, latestBoundary);
+                    log.info("[{}] Prepended out-of-window compression boundary id={} so the model keeps the summary context",
+                            agentName, latestBoundary.getId());
+                }
+            } catch (Exception e) {
+                log.warn("[{}] findLatestCompressionBoundary failed; loading recent window without boundary: {}",
+                        agentName, e.getMessage());
             }
         }
 

@@ -388,6 +388,30 @@ public class ConversationService {
     }
 
     /**
+     * Returns the most recent compression boundary row for the conversation,
+     * or {@code null} if no boundary exists yet. Used by the agent loader to
+     * recover the structured summary when the boundary itself sits outside the
+     * recent-message window — without this, a long conversation that already
+     * compacted would feed the model the last N raw messages while silently
+     * dropping the goal / progress digest the boundary holds.
+     *
+     * <p>Implemented as a single indexed query rather than a full
+     * {@code listMessages} + filter so it stays cheap on conversations with
+     * thousands of messages. Selection: {@code role=system} +
+     * {@code metadata like '%compression_summary%'} (the metadata column always
+     * carries that literal — see {@link #saveCompressionSummary}).
+     */
+    public MessageEntity findLatestCompressionBoundary(String conversationId) {
+        return messageMapper.selectOne(new LambdaQueryWrapper<MessageEntity>()
+                .eq(MessageEntity::getConversationId, conversationId)
+                .eq(MessageEntity::getRole, "system")
+                .like(MessageEntity::getMetadata, "compression_summary")
+                .orderByDesc(MessageEntity::getCreateTime)
+                .orderByDesc(MessageEntity::getId)
+                .last("LIMIT 1"));
+    }
+
+    /**
      * 加载最近 N 条消息（倒序取出后翻转为正序）。
      * 利用复合索引 (conversation_id, create_time) 高效分页。
      */
@@ -443,6 +467,24 @@ public class ConversationService {
     }
 
     /**
+     * Same as {@link #saveCompressionSummary(String, String, int, Map)} but
+     * returns the inserted row's id so callers (notably
+     * {@code ConversationWindowManager}) can include the {@code summaryId}
+     * in the {@code compact_status} SSE payload. The id is also written back
+     * into the row's metadata JSON by the underlying overload, so the row is
+     * still self-describing if a client misses the SSE event and loads
+     * history later.
+     *
+     * <p>Returns {@code null} when the insert path failed (logged at INFO);
+     * callers should treat that as "no boundary was persisted" and still
+     * broadcast a {@code done} event without {@code summaryId}.
+     */
+    public Long saveCompressionSummaryReturningId(String conversationId, String summary,
+                                                  int compressedCount, Map<String, Object> extraMetadata) {
+        return saveCompressionSummaryInternal(conversationId, summary, compressedCount, extraMetadata);
+    }
+
+    /**
      * Same as the 3-arg overload but accepts extra structured fields that
      * are merged into the boundary's metadata JSON. Fields the frontend
      * and observability pipeline care about:
@@ -463,6 +505,11 @@ public class ConversationService {
      */
     public void saveCompressionSummary(String conversationId, String summary, int compressedCount,
                                        Map<String, Object> extraMetadata) {
+        saveCompressionSummaryInternal(conversationId, summary, compressedCount, extraMetadata);
+    }
+
+    private Long saveCompressionSummaryInternal(String conversationId, String summary, int compressedCount,
+                                                Map<String, Object> extraMetadata) {
         MessageEntity entity = new MessageEntity();
         entity.setConversationId(conversationId);
         entity.setRole("system");
@@ -506,6 +553,7 @@ public class ConversationService {
         }
         log.info("[Conversation] Saved compression boundary conv={}, compressedCount={}, metadata={}",
                 conversationId, compressedCount, entity.getMetadata());
+        return entity.getId();
     }
 
     public List<MessageVO> listMessageViews(String conversationId) {
