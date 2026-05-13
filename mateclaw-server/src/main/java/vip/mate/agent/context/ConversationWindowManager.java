@@ -263,6 +263,19 @@ public class ConversationWindowManager {
             return messages;
         }
 
+        // Pair safety: never split an AssistantMessage's tool_calls from its
+        // matching ToolResponseMessages. The cut may walk forward (i.e. the
+        // tail grows) until every call/response cluster lives on one side of
+        // the boundary. If no safe cut survives the walk, skip compaction —
+        // a broken pair would 400 every OpenAI-compatible provider, which is
+        // strictly worse than letting context cross the budget by one extra
+        // turn.
+        int pairSafeCut = enforcePairSafeBoundary(messages, headEnd, tailStart);
+        if (pairSafeCut <= headEnd) {
+            return messages;
+        }
+        tailStart = pairSafeCut;
+
         List<Message> oldMessages = new ArrayList<>(messages.subList(headEnd, tailStart));
         List<Message> recentMessages = messages.subList(tailStart, messages.size());
 
@@ -404,6 +417,113 @@ public class ConversationWindowManager {
         }
 
         return Math.max(cutIdx, headEnd + 1);
+    }
+
+    /**
+     * Adjust the candidate boundary so an {@link AssistantMessage}'s
+     * {@code toolCalls} are never separated from their matching
+     * {@link ToolResponseMessage}s.
+     *
+     * <p>Walks forward, collecting every {@code tool_call_id}'s assistant
+     * index and the indices of its matching responses. Whenever an
+     * assistant in the prefix has at least one response in the tail, the
+     * cut moves backward to that assistant — pulling the whole cluster
+     * into the tail. The walk repeats until convergence because moving
+     * the cut can expose pairs that were previously fully in the tail.
+     *
+     * <p>The method preserves pair integrity above any other concern. If
+     * the cut collapses all the way to {@code headEnd}, callers must
+     * interpret the return as "skip compaction this turn" — splitting a
+     * pair would produce HTTP 400 on every OpenAI-compatible provider,
+     * which is a worse failure mode than letting context grow by one turn.
+     *
+     * <p>An orphan {@code ToolResponseMessage} (id matching no
+     * assistant in scope) does not trigger movement; the upstream code
+     * paths should never produce one, and logging at WARN gives us a
+     * breadcrumb if they ever do.
+     *
+     * @return adjusted cut index, or {@code headEnd} when no pair-safe
+     *         cut larger than {@code headEnd} can be produced.
+     */
+    // Package-private so unit tests in the same package can drive it directly
+    // without standing up a ChatModel + the rest of the compactMessages pipeline.
+    int enforcePairSafeBoundary(List<Message> messages, int headEnd, int tailStart) {
+        if (tailStart <= headEnd || tailStart >= messages.size()) {
+            return tailStart;
+        }
+        int cut = tailStart;
+        int safety = messages.size() + 1; // hard guard against pathological loops
+        while (safety-- > 0) {
+            // Map: tool_call_id -> earliest assistant index that issued it.
+            java.util.Map<String, Integer> assistantIdxById = new java.util.HashMap<>();
+            // Map: tool_call_id -> max response index closing it.
+            java.util.Map<String, Integer> latestResponseIdxById = new java.util.HashMap<>();
+
+            for (int i = headEnd; i < messages.size(); i++) {
+                Message m = messages.get(i);
+                if (m instanceof AssistantMessage am && am.getToolCalls() != null) {
+                    for (AssistantMessage.ToolCall tc : am.getToolCalls()) {
+                        String tid = tc.id();
+                        if (tid == null || tid.isEmpty()) continue;
+                        // Keep the first occurrence so the cut "snaps" to the
+                        // earliest assistant for any duplicated ids; the same
+                        // id should never repeat anyway.
+                        assistantIdxById.putIfAbsent(tid, i);
+                    }
+                } else if (m instanceof ToolResponseMessage trm) {
+                    for (ToolResponseMessage.ToolResponse r : trm.getResponses()) {
+                        String tid = r.id();
+                        if (tid == null || tid.isEmpty()) continue;
+                        latestResponseIdxById.merge(tid, i, Math::max);
+                    }
+                }
+            }
+
+            // Find the earliest in-prefix assistant whose pair is split.
+            int earliestSplitAssistant = Integer.MAX_VALUE;
+            for (var e : assistantIdxById.entrySet()) {
+                String id = e.getKey();
+                int aIdx = e.getValue();
+                Integer rIdx = latestResponseIdxById.get(id);
+                if (rIdx == null) {
+                    // Assistant issued a call but no response — orphan call,
+                    // would already break the provider. Not a pair-split, ignore.
+                    continue;
+                }
+                if (aIdx < cut && rIdx >= cut && aIdx < earliestSplitAssistant) {
+                    earliestSplitAssistant = aIdx;
+                }
+                if (aIdx >= cut && rIdx < cut) {
+                    log.warn("[ConversationWindow] Orphan tool response in prefix without preceding assistant in tail (id={}); leaving boundary alone",
+                            id);
+                }
+            }
+
+            if (earliestSplitAssistant == Integer.MAX_VALUE) {
+                break; // converged: no splits remain
+            }
+            cut = earliestSplitAssistant;
+        }
+
+        if (cut <= headEnd) {
+            log.info("[ConversationWindow] Pair-safe boundary collapsed to {} for conv: skipping compaction this turn to avoid splitting a tool_call ↔ tool_response pair",
+                    headEnd);
+            return headEnd;
+        }
+
+        int prefixSize = cut - headEnd;
+        int minPrefix = Math.max(0, properties.getPairSafeMinPrefixToCompact());
+        if (prefixSize < minPrefix) {
+            log.info("[ConversationWindow] Pair-safe boundary left {} prefix message(s) (< minPrefix={}); skipping compaction",
+                    prefixSize, minPrefix);
+            return headEnd;
+        }
+
+        if (cut != tailStart) {
+            log.info("[ConversationWindow] Pair-safe boundary moved {} -> {} to keep tool_call ↔ tool_response pairs intact",
+                    tailStart, cut);
+        }
+        return cut;
     }
 
     /**

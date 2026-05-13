@@ -37,4 +37,17 @@ public class ConversationWindowProperties {
 
     /** 摘要 token 预算下限（字数） */
     private int summaryBudgetFloor = 500;
+
+    /**
+     * Minimum prefix size (in messages) the pair-safe boundary must leave
+     * before compaction is allowed to run. After enforcing tool-call/response
+     * pair integrity the boundary may collapse so far forward that only a
+     * handful of messages remain in the prefix — at that point the
+     * compaction cost (a structured-summary LLM call) outweighs any token
+     * savings, and we may as well skip this turn.
+     *
+     * <p>Default 2 means "at least two old messages worth condensing".
+     * Set to 0 to always attempt compaction whenever a pair-safe cut exists.
+     */
+    private int pairSafeMinPrefixToCompact = 2;
 }
