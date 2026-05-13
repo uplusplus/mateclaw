@@ -344,8 +344,12 @@ public abstract class BaseAgent {
         //
         // The boundary prepend earlier inserts a SystemMessage at the head;
         // the orphan, if present, sits at index 1 in that case. Skip leading
-        // SystemMessages and drop any ToolResponseMessage whose response ids
-        // are all unmatched by the AssistantMessages still in scope.
+        // SystemMessages and drop any leading ToolResponseMessage whose
+        // response ids are not all issued by a *preceding* AssistantMessage
+        // — i.e. one we have already walked past in this scan. Provider
+        // validity is order-sensitive; a later same-id assistant deeper in
+        // the window does NOT redeem an earlier orphan. See
+        // stripHeadOrphanToolResponses below for the forward-scan details.
         //
         // Dropping is correct rather than expanding backward to fetch the
         // missing assistant: if the AssistantMessage is outside the window,
