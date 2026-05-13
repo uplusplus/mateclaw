@@ -40,12 +40,26 @@ public class ToolResultProperties {
     private boolean enabled = true;
 
     /**
-     * Layer 2 — a single tool result larger than this is spilled to disk.
-     * The executor evaluates this against the raw result before applying the
-     * final inline cap, so oversized content is preserved before it is shortened
-     * for the model request.
+     * Per-result spill threshold. A single tool result larger than this is
+     * spilled to disk and the in-context view is replaced with a short
+     * preview + path so the model can call {@code read_file} on demand.
+     *
+     * <p>Aligned with {@code ToolExecutionExecutor.MAX_TOOL_RESULT_CHARS}
+     * (8000): the executor now tries to spill the RAW result first; only
+     * when spilling is disabled, the tool is on {@link #excludedTools}, the
+     * body is under this threshold, or the disk write fails, does it fall
+     * back to truncating inline to 8000 chars. Keeping the threshold equal
+     * to the truncate cap yields a single semantic ladder — above the
+     * threshold means "preserved on disk", at-or-below means "stays inline
+     * verbatim".
+     *
+     * <p>If you want to keep more text inline before spilling, raise this
+     * value AND raise the executor's hard cap together; otherwise the
+     * 8000-char fallback truncate would silently shorten anything between
+     * this threshold and 8000 even when spill is disabled, defeating the
+     * intent.
      */
-    private int perResultThresholdChars = 16000;  // was 4000 — prevents WebSearch spill-to-disk
+    private int perResultThresholdChars = 8000;
 
     /**
      * Layer 3 — aggregate cap on combined response size in one tool turn.
