@@ -1,4 +1,6 @@
 package vip.mate.agent;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -27,6 +29,7 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -292,10 +295,7 @@ public abstract class BaseAgent {
 
         List<Message> messages = new ArrayList<>(limit);
         for (int i = 0; i < limit; i += 1) {
-            Message springMessage = sanitizeForLlm(history.get(i));
-            if (springMessage != null) {
-                messages.add(springMessage);
-            }
+            messages.addAll(expandToSpringMessages(history.get(i)));
         }
 
         // Tail guard — orphan-user strip (issue #47).
@@ -525,6 +525,193 @@ public abstract class BaseAgent {
         // wrapper is constructed.
         return toSpringMessage(entity);
     }
+
+    /**
+     * Replay a persisted message as 1..N Spring AI {@link Message}s.
+     *
+     * <p>Plain user/system/assistant rows expand to a single message via
+     * {@link #sanitizeForLlm}. Assistant rows that issued tool calls during
+     * the original turn expand to TWO messages:
+     * <ol>
+     *   <li>{@link AssistantMessage} carrying the persisted narration <em>and</em>
+     *       the {@link AssistantMessage.ToolCall} list reconstructed from
+     *       {@code metadata.toolCalls}.</li>
+     *   <li>A single {@link ToolResponseMessage} bundling one
+     *       {@link ToolResponseMessage.ToolResponse} per completed tool call,
+     *       with the persisted {@code result} string as content.</li>
+     * </ol>
+     *
+     * <p>Without this expansion the next turn would see a bare assistant text
+     * row containing chain-of-thought like "Let me try the browser..." but no
+     * tool calls and no observations. The LLM concludes the action wasn't
+     * actually performed and retries the same tool, looping until the iteration
+     * cap. Issuing the structured tool_call + tool_response pair lets the model
+     * see what already ran and reason from the result instead.
+     *
+     * <p>Only completed tool calls (status=completed AND result present) are
+     * replayed. Calls left in awaiting_approval or running state are dropped
+     * — replaying them without a paired response would produce a sequence the
+     * provider rejects (every tool_call_id must have a matching tool_response).
+     *
+     * <p>RFC-052 direct-tool rows take the existing scrub path unchanged; the
+     * placeholder text already names the originating tool and instructs the
+     * model to re-call if needed, which is the correct multi-turn signal for
+     * returnDirect tools.
+     */
+    List<Message> expandToSpringMessages(MessageEntity entity) {
+        if (entity == null) return List.of();
+        // Stages 0/1/1.5 in sanitizeForLlm drop cron-header system rows,
+        // approval-placeholder assistants, and error-status assistants. Those
+        // rows must NOT replay structured tool exchanges even if metadata still
+        // carries them — the underlying turn is broken or synthetic. Centralize
+        // that decision so we can apply it before the empty-content check.
+        if (shouldFullyFilter(entity)) return List.of();
+
+        // Non-assistant rows expand to exactly one message via the existing
+        // conversion path (which also handles user-message media injection).
+        if (!"assistant".equals(entity.getRole())) {
+            Message m = toSpringMessage(entity);
+            return m == null ? List.of() : List.of(m);
+        }
+
+        // RFC-052 direct-tool rows: keep the existing placeholder-only path.
+        // The placeholder names the originating tool and tells the model to
+        // re-call it; resurrecting the original tool_call/tool_response pair
+        // would leak the very content RFC-052 elides.
+        if (!directToolNamesIn(entity).isEmpty()) {
+            Message m = toSpringMessage(entity);
+            return m == null ? List.of() : List.of(m);
+        }
+
+        String renderedContent = conversationService.renderMessageContent(entity);
+        List<PersistedToolCall> persisted = extractCompletedToolCalls(entity);
+
+        // No tool calls to replay → fall back to the legacy single-message
+        // path, which preserves the "drop on blank content" behavior for
+        // narration-only assistants.
+        if (persisted.isEmpty()) {
+            Message m = toSpringMessage(entity);
+            return m == null ? List.of() : List.of(m);
+        }
+
+        // Have completed tool calls → emit the structured pair regardless of
+        // whether the rendered content is blank. A pure tool-call turn (LLM
+        // returned tool_calls with no preamble text) is the canonical case
+        // here: previously the row was dropped entirely because
+        // renderMessageContent collapsed to "" once the tool_call part was
+        // skipped, leaving the next turn with no record that the tools ran.
+        return buildToolExchange(entity, renderedContent == null ? "" : renderedContent, persisted);
+    }
+
+    /**
+     * True when the persisted row must be dropped before any history reaches
+     * the LLM, irrespective of its tool-call payload. Mirrors stages 0/1/1.5
+     * of {@link #sanitizeForLlm}: cron-run header system rows, approval
+     * placeholders, and error-status / "[错误] " assistants. Replaying tool
+     * exchanges from these would resurface UI scaffolding or self-replicate
+     * provider failures.
+     */
+    static boolean shouldFullyFilter(MessageEntity entity) {
+        if (entity == null) return true;
+        String role = entity.getRole();
+        if ("system".equals(role)
+                && entity.getContent() != null
+                && entity.getContent().startsWith("📋 ")) return true;
+        if ("assistant".equals(role)
+                && isApprovalPlaceholder(entity.getContent())) return true;
+        if ("assistant".equals(role)
+                && ("error".equals(entity.getStatus())
+                        || (entity.getContent() != null
+                                && entity.getContent().startsWith("[错误] ")))) return true;
+        return false;
+    }
+
+    /**
+     * Build the structured {@code [AssistantMessage(toolCalls), ToolResponseMessage]}
+     * pair from a persisted row. Pure: depends only on its arguments, so it
+     * can be exercised directly from unit tests without a BaseAgent fixture.
+     *
+     * <p>Both sides reuse the same id for each call so the in-prompt sequence
+     * validates with every provider's tool_call_id pairing rule. For legacy
+     * rows persisted before {@code toolCallId} was captured, synthesize a
+     * stable id from {@code entity.id + index}. The id never escapes this
+     * prompt; synthetic and real ids cannot collide downstream.
+     */
+    static List<Message> buildToolExchange(MessageEntity entity, String content,
+                                            List<PersistedToolCall> persisted) {
+        List<AssistantMessage.ToolCall> toolCalls = new ArrayList<>(persisted.size());
+        List<ToolResponseMessage.ToolResponse> responses = new ArrayList<>(persisted.size());
+        for (int i = 0; i < persisted.size(); i++) {
+            PersistedToolCall p = persisted.get(i);
+            String id = (p.toolCallId() == null || p.toolCallId().isEmpty())
+                    ? "legacy-" + entity.getId() + "-" + i
+                    : p.toolCallId();
+            toolCalls.add(new AssistantMessage.ToolCall(id, "function", p.name(), p.arguments()));
+            responses.add(new ToolResponseMessage.ToolResponse(id, p.name(), p.result()));
+        }
+        AssistantMessage rebuilt = AssistantMessage.builder()
+                .content(content == null ? "" : content)
+                .toolCalls(toolCalls)
+                .build();
+        ToolResponseMessage toolResponses = ToolResponseMessage.builder()
+                .responses(responses)
+                .build();
+        return List.of(rebuilt, toolResponses);
+    }
+
+    /**
+     * Parse {@code metadata.toolCalls} into a list of completed entries that
+     * are safe to replay. Returns empty if metadata is missing, malformed, or
+     * carries no entry with both {@code status='completed'} and a non-null
+     * {@code result}.
+     *
+     * <p>Handles H2's JSON-column double-wrap (the column read can produce a
+     * JSON-encoded string of JSON) the same way
+     * {@code ConversationService#reconcileResolvedMessages} does.
+     */
+    static List<PersistedToolCall> extractCompletedToolCalls(MessageEntity entity) {
+        if (entity == null) return List.of();
+        String raw = entity.getMetadata();
+        if (raw == null || raw.isBlank() || !raw.contains("toolCalls")) return List.of();
+        try {
+            String json = raw.trim();
+            if (json.startsWith("\"") && json.endsWith("\"")) {
+                json = HISTORY_METADATA_MAPPER.readValue(json, String.class);
+            }
+            Map<String, Object> meta = HISTORY_METADATA_MAPPER.readValue(json,
+                    new TypeReference<Map<String, Object>>() {});
+            Object tc = meta.get("toolCalls");
+            if (!(tc instanceof List<?> list)) return List.of();
+            List<PersistedToolCall> result = new ArrayList<>(list.size());
+            for (Object entry : list) {
+                if (!(entry instanceof Map<?, ?> raw2)) continue;
+                @SuppressWarnings("unchecked")
+                Map<String, Object> call = (Map<String, Object>) raw2;
+                if (!"completed".equals(String.valueOf(call.get("status")))) continue;
+                Object resultField = call.get("result");
+                if (resultField == null) continue;
+                String name = String.valueOf(call.getOrDefault("name", ""));
+                if (name.isBlank()) continue;
+                String args = String.valueOf(call.getOrDefault("arguments", ""));
+                String toolCallId = String.valueOf(call.getOrDefault("toolCallId", ""));
+                result.add(new PersistedToolCall(toolCallId, name, args, String.valueOf(resultField)));
+            }
+            return result;
+        } catch (Exception e) {
+            log.warn("[BaseAgent] Failed to parse metadata.toolCalls for replay (msgId={}): {}",
+                    entity.getId(), e.getMessage());
+            return List.of();
+        }
+    }
+
+    private static final ObjectMapper HISTORY_METADATA_MAPPER = new ObjectMapper();
+
+    /**
+     * A completed tool call recovered from {@code mate_message.metadata}, ready
+     * to be replayed as an {@link AssistantMessage.ToolCall} / matching
+     * {@link ToolResponseMessage.ToolResponse} pair.
+     */
+    record PersistedToolCall(String toolCallId, String name, String arguments, String result) {}
 
     /**
      * 判断消息是否为持久化的压缩摘要。

@@ -2190,6 +2190,7 @@ export default {
     tabs: {
       canvas: '画布视图',
       json: 'JSON 编辑',
+      runs: '运行 ({count})',
     },
     canvas: {
       empty: '当前草稿没有任何步骤，先在 JSON 编辑器中添加步骤或选择一个模板。',
@@ -2233,7 +2234,8 @@ export default {
         agentPlaceholder: '选择数字员工',
         agentMissing: '当前数字员工不在列表中：{name}',
         promptTemplate: 'Prompt 模板',
-        promptPlaceholder: 'Hello {{ inputs.payload }}',
+        // promptPlaceholder is intentionally not localized — hardcoded in
+        // StepPropertyPanel so vue-i18n's parser never sees the Pebble braces.
         outputVar: '输出变量名',
         outputVarPlaceholder: 'data',
         outputContentType: '输出类型',
