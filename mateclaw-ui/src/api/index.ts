@@ -663,7 +663,7 @@ export const wikiApi = {
   getBacklinks: (kbId: number, slug: string) =>
     http.get(`/wiki/knowledge-bases/${kbId}/pages/${encodeURIComponent(slug)}/backlinks`),
 
-  // RFC-051 PR-7: archived pages
+  // Archived pages
   listArchivedPages: (kbId: number) =>
     http.get(`/wiki/knowledge-bases/${kbId}/pages/archived`),
   archivePage: (kbId: number, slug: string) =>

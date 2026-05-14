@@ -251,11 +251,12 @@ public class WikiController {
         };
 
         if ("text".equals(sourceType)) {
-            // 文本文件直接读取内容
+            // Text files can be stored directly without staging to disk.
             String content = new String(file.getBytes(), StandardCharsets.UTF_8);
             return R.ok(rawService.addText(kbId, originalName, content));
         } else {
-            // 二进制文件保存到磁盘（转绝对路径，避免 Tomcat 临时目录解析问题）
+            // Binary files are staged under an absolute path so Tomcat temp
+            // directory resolution does not affect later processing.
             Path uploadDir = Paths.get(properties.getUploadDir()).toAbsolutePath().normalize();
             Files.createDirectories(uploadDir);
             Path targetPath = uploadDir.resolve(System.currentTimeMillis() + "_" + originalName);
@@ -292,7 +293,7 @@ public class WikiController {
         if (raw == null || !kbId.equals(raw.getKbId())) {
             return R.fail("Raw material not found in this knowledge base");
         }
-        // RFC-012 Change 5：force=true 时清空 last_processed_hash，让下一次处理必然执行完整管线
+        // Force reprocessing by clearing the hash used to skip unchanged inputs.
         if (force) {
             rawService.setLastProcessedHash(rawId, null);
         }
