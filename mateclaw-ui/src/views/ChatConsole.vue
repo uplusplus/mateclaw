@@ -447,6 +447,11 @@ const providers = ref<ProviderInfo[]>([])
 // base URLs, liveness) is admin-only, so viewers chat without it; the prompt
 // flags fall back to "trust the active model" in that branch.
 const providersUnavailable = ref(false)
+// Mirror of /models/enabled (viewer-accessible). Used to resolve the display
+// name of the active model when providers is empty for viewer-level users —
+// otherwise the model selector trigger would show its 配置模型 fallback even
+// though there IS an active model.
+const enabledModels = ref<ModelConfig[]>([])
 const activeModels = ref<ActiveModelsInfo | null>(null)
 const pendingAttachments = ref<ChatAttachment[]>([])
 const uploadingAttachment = ref(false)
@@ -851,7 +856,18 @@ const activeModelValue = computed(() => {
 const activeModelLabel = computed(() => {
   if (!activeModelValue.value) return ''
   const match = eligibleModels.value.find(m => m.value === activeModelValue.value)
-  return match?.label || ''
+  if (match?.label) return match.label
+  // Viewer-level users have an empty providers list (admin-only endpoint), so
+  // eligibleModels is empty even when there IS an active model. Fall back to
+  // the viewer-readable /models/enabled list to resolve a display name —
+  // otherwise the trigger button would read "配置模型" forever.
+  const providerId = activeModels.value?.activeLlm?.providerId
+  const modelName = activeModels.value?.activeLlm?.model
+  if (!providerId || !modelName) return ''
+  const hit = enabledModels.value.find(m =>
+    m.provider === providerId && (m.modelName === modelName || m.name === modelName))
+  if (hit) return hit.name ? `${hit.name} (${hit.modelName})` : hit.modelName
+  return `${providerId} / ${modelName}`
 })
 
 const activeProvider = computed(() => {
@@ -1184,16 +1200,19 @@ async function loadAgents() {
 }
 
 async function loadModelState() {
-  // /default + /active are viewer-accessible and required to chat. /models
-  // (provider list) is admin-only because it returns API keys + base URLs;
-  // viewers degrade to "trust the active model, skip the liveness banner".
+  // /default + /active + /enabled are viewer-accessible and required to chat.
+  // /models (provider list) is admin-only because it returns API keys + base
+  // URLs; viewers degrade to "trust the active model, skip the liveness
+  // banner" and resolve the label via /enabled instead.
   try {
-    const [defaultRes, activeRes]: any = await Promise.all([
+    const [defaultRes, activeRes, enabledRes]: any = await Promise.all([
       modelApi.getDefault(),
       modelApi.getActive(),
+      modelApi.listEnabled(),
     ])
     defaultModel.value = defaultRes.data || null
     activeModels.value = activeRes.data || null
+    enabledModels.value = enabledRes.data || []
   } catch (e) {
     ElMessage.error(t('chat.loadModelFailed'))
     blockingPrompt.value = true
