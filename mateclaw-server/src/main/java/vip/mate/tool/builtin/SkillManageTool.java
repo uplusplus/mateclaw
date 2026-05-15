@@ -4,8 +4,11 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
+import vip.mate.agent.context.ChatOrigin;
 import vip.mate.skill.model.SkillEntity;
 import vip.mate.skill.runtime.SkillRuntimeService;
 import vip.mate.skill.runtime.SkillSecurityService;
@@ -120,7 +123,12 @@ public class SkillManageTool {
 
             @JsonProperty
             @JsonPropertyDescription("For patch action: the new text to replace with")
-            String newText
+            String newText,
+
+            // RFC-063r §2.5: carries the calling agent's ChatOrigin; hidden
+            // from the LLM by JsonSchemaGenerator. Used to stamp the new
+            // skill with the agent's owning workspace.
+            @Nullable ToolContext toolContext
     ) {
         if (action == null || action.isBlank()) {
             return "Error: action is required (create | edit | patch | delete)";
@@ -135,8 +143,10 @@ public class SkillManageTool {
                     + "'. Must match: lowercase letters, digits, hyphens, dots (1-64 chars, start with letter/digit)";
         }
 
+        Long workspaceId = ChatOrigin.from(toolContext).workspaceId();
+
         return switch (action.strip().toLowerCase()) {
-            case "create" -> doCreate(normalizedName, content);
+            case "create" -> doCreate(normalizedName, content, workspaceId);
             case "edit"   -> doEdit(normalizedName, content);
             case "patch"  -> doPatch(normalizedName, oldText, newText);
             case "delete" -> doDelete(normalizedName);
@@ -146,7 +156,7 @@ public class SkillManageTool {
 
     // ==================== Create ====================
 
-    private String doCreate(String name, String content) {
+    private String doCreate(String name, String content, Long workspaceId) {
         if (content == null || content.isBlank()) {
             return "Error: content is required for create action. Provide full SKILL.md content.";
         }
@@ -175,6 +185,7 @@ public class SkillManageTool {
             skill.setBuiltin(false);
             skill.setVersion(extractVersion(content));
             skill.setSecurityScanStatus("PASSED");
+            skill.setWorkspaceId(workspaceId);
 
             skillService.createSkill(skill);
 

@@ -17,6 +17,7 @@ import vip.mate.llm.model.ModelConfigEntity;
 import vip.mate.llm.service.ModelConfigService;
 import vip.mate.wiki.WikiProperties;
 import vip.mate.wiki.dto.WikiChunkDraft;
+import vip.mate.wiki.event.WikiProcessingEvent;
 import vip.mate.wiki.job.WikiKbConfig;
 import vip.mate.wiki.job.WikiKbConfigParser;
 import vip.mate.wiki.model.WikiKnowledgeBaseEntity;
@@ -505,6 +506,39 @@ public class WikiProcessingService {
                 rawService.updateProgress(rawId, "done", pc.done.get(), pc.total.get());
             }
         }
+    }
+
+    /**
+     * Queue every raw material in a KB for asynchronous processing and
+     * return the number of materials queued. Does not block on processing.
+     * <p>
+     * When {@code force=true}, every raw material is reset to {@code pending}
+     * and its {@code last_processed_hash} is cleared so the dedup short-circuit
+     * is bypassed; otherwise only currently-{@code pending} materials are
+     * republished to the event bus (the same shape as the manual
+     * {@code POST /knowledge-bases/{kbId}/process} endpoint).
+     *
+     * @return the number of raw materials queued
+     */
+    public int processKB(Long kbId, boolean force) {
+        if (kbId == null) {
+            throw new IllegalArgumentException("kbId is required");
+        }
+        if (force) {
+            List<WikiRawMaterialEntity> all = rawService.listByKbId(kbId);
+            for (WikiRawMaterialEntity raw : all) {
+                rawService.setLastProcessedHash(raw.getId(), null);
+                rawService.reprocess(raw.getId());
+            }
+            log.info("[Wiki] processKB queued {} raw material(s) for kbId={} (force=true)", all.size(), kbId);
+            return all.size();
+        }
+        List<WikiRawMaterialEntity> pending = rawService.listPending(kbId);
+        for (WikiRawMaterialEntity raw : pending) {
+            eventPublisher.publishEvent(new WikiProcessingEvent(this, raw.getId(), kbId));
+        }
+        log.info("[Wiki] processKB queued {} pending raw material(s) for kbId={}", pending.size(), kbId);
+        return pending.size();
     }
 
     /**

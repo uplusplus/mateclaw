@@ -1000,10 +1000,10 @@ public class AgentGraphBuilder {
         }
         String basePrompt = basePromptBuilder.toString();
 
-        // 使用 skill runtime 构建技能增强（per-agent 绑定过滤）
+        // 使用 skill runtime 构建技能增强（per-agent 绑定过滤 + 工作区隔离）
         Set<Long> boundSkillIds = agentBindingService.getBoundSkillIds(entity.getId());
         String skillEnhancement = skillRuntimeService.buildSkillPromptEnhancement(
-                boundSkillIds, boundTools, maxInputTokens, entity.getId());
+                boundSkillIds, boundTools, maxInputTokens, entity.getId(), entity.getWorkspaceId());
 
         // 工具调用指导
         String toolGuidance = """

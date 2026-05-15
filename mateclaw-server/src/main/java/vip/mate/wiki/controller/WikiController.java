@@ -4,17 +4,16 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import vip.mate.audit.service.AuditEventService;
 import vip.mate.channel.web.Utf8SseEmitter;
 import vip.mate.common.result.R;
 import vip.mate.exception.MateClawException;
 import vip.mate.workspace.core.annotation.RequireWorkspaceRole;
 import vip.mate.wiki.WikiProperties;
-import vip.mate.wiki.event.WikiProcessingEvent;
 import vip.mate.wiki.model.WikiKnowledgeBaseEntity;
 import vip.mate.wiki.model.WikiPageEntity;
 import vip.mate.wiki.model.WikiRawMaterialEntity;
@@ -52,8 +51,8 @@ public class WikiController {
     private final WikiProcessingService processingService;
     private final WikiDirectoryScanService scanService;
     private final WikiProperties properties;
-    private final ApplicationEventPublisher eventPublisher;
     private final WikiProgressBus progressBus;
+    private final AuditEventService auditEventService;
 
     // ==================== Knowledge Base ====================
 
@@ -131,7 +130,12 @@ public class WikiController {
     public R<Void> deleteKB(@PathVariable Long id,
                              @RequestHeader(value = "X-Workspace-Id", required = false) Long workspaceId) {
         verifyKBWorkspace(id, workspaceId);
-        kbService.delete(id);
+        WikiKnowledgeBaseService.CascadeDeleteResult result = kbService.delete(id);
+        String detail = String.format(
+                "{\"rawMaterialCount\":%d,\"pageCount\":%d,\"chunkCount\":%d,\"citationCount\":%d,\"processingJobCount\":%d}",
+                result.rawMaterialCount(), result.pageCount(), result.chunkCount(),
+                result.citationCount(), result.processingJobCount());
+        auditEventService.record("DELETE", "WIKI_KB", String.valueOf(id), result.kbName(), detail);
         return R.ok();
     }
 
@@ -501,21 +505,8 @@ public class WikiController {
                                              @RequestParam(value = "force", defaultValue = "false") boolean force,
                                              @RequestHeader(value = "X-Workspace-Id", required = false) Long workspaceId) {
         verifyKBWorkspace(kbId, workspaceId);
-        List<WikiRawMaterialEntity> targets;
-        if (force) {
-            // 强制重处理：所有非 pending 的材料重置为 pending，并清空 hash 短路
-            targets = rawService.listByKbId(kbId);
-            for (WikiRawMaterialEntity r : targets) {
-                rawService.setLastProcessedHash(r.getId(), null);
-                rawService.reprocess(r.getId());   // reprocess 会把状态设为 pending 并发布事件
-            }
-            return R.ok(Map.of("queued", targets.size(), "force", true));
-        }
-        targets = rawService.listPending(kbId);
-        for (WikiRawMaterialEntity raw : targets) {
-            eventPublisher.publishEvent(new WikiProcessingEvent(this, raw.getId(), kbId));
-        }
-        return R.ok(Map.of("queued", targets.size(), "force", false));
+        int queued = processingService.processKB(kbId, force);
+        return R.ok(Map.of("queued", queued, "force", force));
     }
 
     @RequireWorkspaceRole("viewer")

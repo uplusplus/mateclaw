@@ -45,10 +45,14 @@ public class SkillInstallController {
     @Operation(summary = "开始异步安装 skill")
     @PostMapping("/start")
     @RequireWorkspaceRole("admin")
-    public R<InstallTask> startInstall(@RequestBody InstallRequest request) {
+    public R<InstallTask> startInstall(@RequestBody InstallRequest request,
+            @RequestHeader(value = "X-Workspace-Id", required = false) Long workspaceId) {
         if (request.getBundleUrl() == null || request.getBundleUrl().isBlank()) {
             return R.fail("bundleUrl is required");
         }
+        // Stamp the owning workspace from the request context — never trust
+        // a workspaceId smuggled in the JSON body.
+        request.setWorkspaceId(workspaceId);
         return R.ok(skillInstaller.startInstall(request));
     }
 
@@ -78,7 +82,8 @@ public class SkillInstallController {
             @RequestPart("file") MultipartFile zipFile,
             @RequestParam(defaultValue = "true") Boolean enable,
             @RequestParam(defaultValue = "false") Boolean overwrite,
-            @RequestParam(required = false) String targetName) {
+            @RequestParam(required = false) String targetName,
+            @RequestHeader(value = "X-Workspace-Id", required = false) Long workspaceId) {
         // 校验文件类型
         String filename = zipFile.getOriginalFilename();
         if (filename == null || !filename.toLowerCase().endsWith(".zip")) {
@@ -86,7 +91,8 @@ public class SkillInstallController {
         }
         try {
             SkillBundle bundle = ZipSkillFetcher.parse(zipFile, frontmatterParser);
-            Map<String, Object> result = skillInstaller.installFromBundle(bundle, enable, overwrite, targetName);
+            Map<String, Object> result = skillInstaller.installFromBundle(
+                    bundle, enable, overwrite, targetName, workspaceId);
             return R.ok(result);
         } catch (IllegalArgumentException e) {
             return R.fail(400, e.getMessage());
@@ -98,8 +104,9 @@ public class SkillInstallController {
     @Operation(summary = "卸载 skill")
     @DeleteMapping("/{skillName}")
     @RequireWorkspaceRole("admin")
-    public R<Map<String, String>> uninstall(@PathVariable String skillName) {
-        skillInstaller.uninstall(skillName);
+    public R<Map<String, String>> uninstall(@PathVariable String skillName,
+            @RequestHeader(value = "X-Workspace-Id", required = false) Long workspaceId) {
+        skillInstaller.uninstall(skillName, workspaceId);
         return R.ok(Map.of("message", "Skill '" + skillName + "' uninstalled"));
     }
 }

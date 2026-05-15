@@ -67,6 +67,25 @@ public class SkillService {
 
     // ==================== CRUD ====================
 
+    /** Default workspace id used when no {@code X-Workspace-Id} is supplied. */
+    public static final long DEFAULT_WORKSPACE_ID = 1L;
+
+    static long normalizeWorkspaceId(Long workspaceId) {
+        return workspaceId != null ? workspaceId : DEFAULT_WORKSPACE_ID;
+    }
+
+    /**
+     * Restrict a query to skills visible inside {@code workspaceId}: builtin
+     * skills are global (shared across every workspace), every other skill is
+     * owned by exactly one workspace. Applied as a nested {@code AND (builtin
+     * OR workspace_id = ?)} group so it composes with other filters.
+     */
+    private static void applyWorkspaceScope(LambdaQueryWrapper<SkillEntity> wrapper, Long workspaceId) {
+        long wsId = normalizeWorkspaceId(workspaceId);
+        wrapper.and(w -> w.eq(SkillEntity::getBuiltin, true)
+                .or().eq(SkillEntity::getWorkspaceId, wsId));
+    }
+
     /**
      * 获取所有技能列表（管理页面使用）
      * 排序：内置优先，然后按创建时间倒序
@@ -75,6 +94,18 @@ public class SkillService {
         return skillMapper.selectList(new LambdaQueryWrapper<SkillEntity>()
                 .orderByDesc(SkillEntity::getBuiltin)
                 .orderByDesc(SkillEntity::getCreateTime));
+    }
+
+    /**
+     * Workspace-scoped variant of {@link #listSkills()} — returns builtin
+     * skills plus the skills owned by {@code workspaceId}.
+     */
+    public List<SkillEntity> listSkills(Long workspaceId) {
+        LambdaQueryWrapper<SkillEntity> wrapper = new LambdaQueryWrapper<SkillEntity>()
+                .orderByDesc(SkillEntity::getBuiltin)
+                .orderByDesc(SkillEntity::getCreateTime);
+        applyWorkspaceScope(wrapper, workspaceId);
+        return skillMapper.selectList(wrapper);
     }
 
     /**
@@ -88,33 +119,23 @@ public class SkillService {
      * security_scan_status}: {@code "FAILED"} surfaces blocked skills so the
      * admin can inspect findings and rescan, {@code "PASSED"} shows scanned
      * clean rows, {@code null} / empty means no scan filter.
+     *
+     * <p>{@code workspaceId} scopes the result to one workspace's catalog:
+     * builtin skills are always included (they're global), every other skill
+     * only when it belongs to {@code workspaceId}. A {@code null} workspace
+     * falls back to the default workspace.
      */
-    public IPage<SkillEntity> pageSkills(int page, int size, String keyword,
-                                          String skillType, Boolean enabled,
-                                          String scanStatus) {
-        return pageSkills(page, size, keyword, skillType, enabled, scanStatus,
-                null, null, null, Set.of());
-    }
-
-    public IPage<SkillEntity> pageSkills(int page, int size, String keyword,
-                                          String skillType, Boolean enabled,
-                                          String scanStatus,
-                                          String sort,
-                                          String source,
-                                          String runtime) {
-        return pageSkills(page, size, keyword, skillType, enabled, scanStatus,
-                sort, source, runtime, Set.of());
-    }
-
     public IPage<SkillEntity> pageSkills(int page, int size, String keyword,
                                           String skillType, Boolean enabled,
                                           String scanStatus,
                                           String sort,
                                           String source,
                                           String runtime,
-                                          Set<Long> pinnedSkillIds) {
+                                          Set<Long> pinnedSkillIds,
+                                          Long workspaceId) {
         Page<SkillEntity> pageParam = new Page<>(Math.max(page, 1), Math.max(size, 1));
         LambdaQueryWrapper<SkillEntity> wrapper = new LambdaQueryWrapper<>();
+        applyWorkspaceScope(wrapper, workspaceId);
 
         if (keyword != null && !keyword.isBlank()) {
             String kw = keyword.trim();
@@ -191,14 +212,19 @@ public class SkillService {
     /**
      * Aggregate skill counts per {@code skill_type}, plus an {@code all}
      * rollup. Feeds the SkillMarket tab badges without pulling every row.
+     * Scoped to {@code workspaceId}: builtin skills count for every
+     * workspace, all other skills only for their owning workspace.
      */
-    public Map<String, Long> countByType() {
+    public Map<String, Long> countByType(Long workspaceId) {
         Map<String, Long> result = new LinkedHashMap<>();
-        result.put("all", skillMapper.selectCount(null));
+        LambdaQueryWrapper<SkillEntity> allWrapper = new LambdaQueryWrapper<>();
+        applyWorkspaceScope(allWrapper, workspaceId);
+        result.put("all", skillMapper.selectCount(allWrapper));
         for (String type : List.of("builtin", "mcp", "dynamic")) {
-            result.put(type, skillMapper.selectCount(
-                    new LambdaQueryWrapper<SkillEntity>()
-                            .eq(SkillEntity::getSkillType, type)));
+            LambdaQueryWrapper<SkillEntity> wrapper = new LambdaQueryWrapper<SkillEntity>()
+                    .eq(SkillEntity::getSkillType, type);
+            applyWorkspaceScope(wrapper, workspaceId);
+            result.put(type, skillMapper.selectCount(wrapper));
         }
         return result;
     }
@@ -218,6 +244,20 @@ public class SkillService {
     }
 
     /**
+     * Workspace-scoped variant of {@link #listEnabledSkills()} — builtin
+     * skills plus the enabled skills owned by {@code workspaceId}.
+     */
+    public List<SkillEntity> listEnabledSkills(Long workspaceId) {
+        LambdaQueryWrapper<SkillEntity> wrapper = new LambdaQueryWrapper<SkillEntity>()
+                .eq(SkillEntity::getEnabled, true)
+                .and(w -> w.isNull(SkillEntity::getSecurityScanStatus)
+                           .or().eq(SkillEntity::getSecurityScanStatus, "PASSED"))
+                .orderByAsc(SkillEntity::getName);
+        applyWorkspaceScope(wrapper, workspaceId);
+        return skillMapper.selectList(wrapper);
+    }
+
+    /**
      * 按名称查找技能（RFC-023：SkillManageTool 重名检查用）
      */
     public SkillEntity findByName(String name) {
@@ -233,6 +273,17 @@ public class SkillService {
         return skillMapper.selectList(new LambdaQueryWrapper<SkillEntity>()
                 .eq(SkillEntity::getSkillType, skillType)
                 .orderByDesc(SkillEntity::getCreateTime));
+    }
+
+    /**
+     * Workspace-scoped variant of {@link #listSkillsByType(String)}.
+     */
+    public List<SkillEntity> listSkillsByType(String skillType, Long workspaceId) {
+        LambdaQueryWrapper<SkillEntity> wrapper = new LambdaQueryWrapper<SkillEntity>()
+                .eq(SkillEntity::getSkillType, skillType)
+                .orderByDesc(SkillEntity::getCreateTime);
+        applyWorkspaceScope(wrapper, workspaceId);
+        return skillMapper.selectList(wrapper);
     }
 
     /**
@@ -267,6 +318,14 @@ public class SkillService {
         skill.setBuiltin(false);
         if (skill.getEnabled() == null) {
             skill.setEnabled(true);
+        }
+        // Every skill belongs to a workspace. Callers that carry an
+        // X-Workspace-Id header set this explicitly; the no-arg create
+        // path falls back to the default workspace instead of relying on
+        // the column DEFAULT, so the value is always populated on the
+        // returned entity.
+        if (skill.getWorkspaceId() == null) {
+            skill.setWorkspaceId(DEFAULT_WORKSPACE_ID);
         }
         // 前端只识别 builtin/mcp/dynamic，用户新建默认为 dynamic
         if (skill.getSkillType() == null || skill.getSkillType().isBlank()) {
@@ -664,6 +723,17 @@ public class SkillService {
      */
     public Map<String, List<String>> getEnabledSkillSummary() {
         return listEnabledSkills().stream()
+                .collect(Collectors.groupingBy(
+                        SkillEntity::getSkillType,
+                        Collectors.mapping(SkillEntity::getName, Collectors.toList())
+                ));
+    }
+
+    /**
+     * Workspace-scoped variant of {@link #getEnabledSkillSummary()}.
+     */
+    public Map<String, List<String>> getEnabledSkillSummary(Long workspaceId) {
+        return listEnabledSkills(workspaceId).stream()
                 .collect(Collectors.groupingBy(
                         SkillEntity::getSkillType,
                         Collectors.mapping(SkillEntity::getName, Collectors.toList())

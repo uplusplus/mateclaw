@@ -53,7 +53,8 @@ public class SkillTemplateController {
     @RequireWorkspaceRole("admin")
     public R<SkillEntity> instantiate(
             @PathVariable String id,
-            @RequestBody Map<String, Object> values) {
-        return R.ok(templateService.instantiate(id, values));
+            @RequestBody Map<String, Object> values,
+            @RequestHeader(value = "X-Workspace-Id", required = false) Long workspaceId) {
+        return R.ok(templateService.instantiate(id, values, workspaceId));
     }
 }

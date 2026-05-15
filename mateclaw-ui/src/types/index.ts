@@ -923,9 +923,9 @@ export interface CronJob {
   name: string
   cronExpression: string
   timezone: string
-  agentId: string | number
+  agentId: string | number | null
   agentName?: string
-  taskType: 'text' | 'agent' | 'reminder'
+  taskType: 'text' | 'agent' | 'reminder' | 'wiki_process'
   triggerMessage?: string
   requestBody?: string
   enabled: boolean
