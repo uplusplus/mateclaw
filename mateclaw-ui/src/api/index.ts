@@ -767,6 +767,7 @@ export const wikiApi = {
 export const workspaceTeamApi = {
   list: () => http.get('/workspaces'),
   get: (id: string | number) => http.get(`/workspaces/${id}`),
+  getAccess: (id: string | number) => http.get(`/workspaces/${id}/access`),
   create: (data: any) => http.post('/workspaces', data),
   update: (id: string | number, data: any) => http.put(`/workspaces/${id}`, data),
   delete: (id: string | number) => http.delete(`/workspaces/${id}`),
