@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import vip.mate.common.result.R;
 import vip.mate.skill.installer.SkillInstaller;
+import vip.mate.workspace.core.annotation.RequireWorkspaceRole;
 import vip.mate.skill.installer.ZipSkillFetcher;
 import vip.mate.skill.installer.model.*;
 import vip.mate.skill.runtime.SkillFrontmatterParser;
@@ -34,6 +35,7 @@ public class SkillInstallController {
 
     @Operation(summary = "搜索 ClawHub 市场")
     @GetMapping("/hub/search")
+    @RequireWorkspaceRole("admin")
     public R<List<HubSkillInfo>> searchHub(
             @RequestParam String q,
             @RequestParam(defaultValue = "20") int limit) {
@@ -42,6 +44,7 @@ public class SkillInstallController {
 
     @Operation(summary = "开始异步安装 skill")
     @PostMapping("/start")
+    @RequireWorkspaceRole("admin")
     public R<InstallTask> startInstall(@RequestBody InstallRequest request) {
         if (request.getBundleUrl() == null || request.getBundleUrl().isBlank()) {
             return R.fail("bundleUrl is required");
@@ -51,6 +54,7 @@ public class SkillInstallController {
 
     @Operation(summary = "查询安装任务状态")
     @GetMapping("/status/{taskId}")
+    @RequireWorkspaceRole("admin")
     public R<InstallTask> getStatus(@PathVariable String taskId) {
         InstallTask task = skillInstaller.getTaskStatus(taskId);
         if (task == null) {
@@ -61,6 +65,7 @@ public class SkillInstallController {
 
     @Operation(summary = "取消安装任务")
     @PostMapping("/cancel/{taskId}")
+    @RequireWorkspaceRole("admin")
     public R<Void> cancel(@PathVariable String taskId) {
         skillInstaller.cancelTask(taskId);
         return R.ok();
@@ -68,6 +73,7 @@ public class SkillInstallController {
 
     @Operation(summary = "上传 ZIP 安装 skill")
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @RequireWorkspaceRole("admin")
     public R<Map<String, Object>> uploadZip(
             @RequestPart("file") MultipartFile zipFile,
             @RequestParam(defaultValue = "true") Boolean enable,
@@ -91,6 +97,7 @@ public class SkillInstallController {
 
     @Operation(summary = "卸载 skill")
     @DeleteMapping("/{skillName}")
+    @RequireWorkspaceRole("admin")
     public R<Map<String, String>> uninstall(@PathVariable String skillName) {
         skillInstaller.uninstall(skillName);
         return R.ok(Map.of("message", "Skill '" + skillName + "' uninstalled"));
