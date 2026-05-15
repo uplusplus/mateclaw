@@ -324,7 +324,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { mcToast } from '@/composables/useMcToast'
 import { mcConfirm } from '@/components/common/useConfirm'
 import { useCronJobStore } from '@/stores/useCronJobStore'
 import { useAgentStore } from '@/stores/useAgentStore'
@@ -436,14 +436,14 @@ async function saveJob() {
   try {
     if (editing.value) {
       await store.updateJob(editing.value.id, form.value)
-      ElMessage.success(t('cronJobs.messages.updateSuccess'))
+      mcToast.success(t('cronJobs.messages.updateSuccess'))
     } else {
       await store.createJob(form.value)
-      ElMessage.success(t('cronJobs.messages.createSuccess'))
+      mcToast.success(t('cronJobs.messages.createSuccess'))
     }
     closeModal()
   } catch (e: any) {
-    ElMessage.error(e?.message || e)
+    mcToast.error(e?.message || e)
   }
 }
 
@@ -456,9 +456,9 @@ async function handleDelete(job: CronJob) {
   if (!ok) return
   try {
     await store.deleteJob(job.id)
-    ElMessage.success(t('cronJobs.messages.deleteSuccess'))
+    mcToast.success(t('cronJobs.messages.deleteSuccess'))
   } catch (e: any) {
-    ElMessage.error(e?.message || e)
+    mcToast.error(e?.message || e)
   }
 }
 
@@ -466,20 +466,20 @@ async function handleToggle(job: CronJob) {
   try {
     const newEnabled = !job.enabled
     await store.toggleJob(job.id, newEnabled)
-    ElMessage.success(newEnabled ? t('cronJobs.messages.enableSuccess') : t('cronJobs.messages.disableSuccess'))
+    mcToast.success(newEnabled ? t('cronJobs.messages.enableSuccess') : t('cronJobs.messages.disableSuccess'))
     store.fetchJobs()
   } catch (e: any) {
-    ElMessage.error(e?.message || e)
+    mcToast.error(e?.message || e)
   }
 }
 
 async function handleRunNow(job: CronJob) {
   try {
     await store.runNow(job.id)
-    ElMessage.success(t('cronJobs.messages.runTriggered', { id: job.id }))
+    mcToast.success(t('cronJobs.messages.runTriggered', { id: job.id }))
     setTimeout(() => store.fetchJobs(), 3000)
   } catch (e: any) {
-    ElMessage.error(e?.message || e)
+    mcToast.error(e?.message || e)
   }
 }
 

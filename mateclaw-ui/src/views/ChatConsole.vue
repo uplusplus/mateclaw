@@ -341,7 +341,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { mcToast } from '@/composables/useMcToast'
 import { mcConfirm } from '@/components/common/useConfirm'
 import { ChatDotRound, Delete, Plus, Setting, UploadFilled } from '@element-plus/icons-vue'
 import { conversationApi, agentApi, modelApi, chatApi, cronJobApi } from '@/api/index'
@@ -488,7 +488,7 @@ async function selectModel(value: string) {
     activeModels.value = res.data || { activeLlm: { providerId, model } }
     await loadModelState()
   } catch (e) {
-    ElMessage.error(t('chat.switchModelFailed'))
+    mcToast.error(t('chat.switchModelFailed'))
   } finally {
     modelSaving.value = false
   }
@@ -991,16 +991,38 @@ const eligibleModels = computed(() => {
 })
 
 // ============ 生命周期 ============
-function handleKeyboardShortcuts(e: KeyboardEvent) {
-  const mod = e.metaKey || e.ctrlKey
-  if (mod && e.key === 'n') {
-    e.preventDefault()
+// Global shortcuts (Ctrl+K agents, Ctrl+N new chat) live in MainLayout so they
+// work from any page; this view reacts to the dispatched event when mounted.
+function handleChatShortcut(e: Event) {
+  const action = (e as CustomEvent).detail as 'newChat' | 'selectAgent' | undefined
+  if (action === 'newChat') {
     newConversation()
-    chatInputRef.value?.focus?.()
-  }
-  if (mod && e.key === 'k') {
-    e.preventDefault()
+    nextTick(() => chatInputRef.value?.focus?.())
+  } else if (action === 'selectAgent') {
     agentDropdownOpen.value = !agentDropdownOpen.value
+  }
+}
+
+// Cross-page hand-off from MainLayout's global shortcuts: read once on mount
+// (before loadAgents triggers syncRouteState, which would wipe the action key)
+// and apply after agents are loaded so the dropdown actually has something to show.
+let pendingRouteAction: 'newChat' | 'selectAgent' | '' = ''
+
+function captureRouteAction() {
+  const action = route.query.action
+  if (action === 'newChat' || action === 'selectAgent') {
+    pendingRouteAction = action
+  }
+}
+
+function applyPendingRouteAction() {
+  const action = pendingRouteAction
+  pendingRouteAction = ''
+  if (action === 'newChat') {
+    newConversation()
+    nextTick(() => chatInputRef.value?.focus?.())
+  } else if (action === 'selectAgent') {
+    agentDropdownOpen.value = true
   }
 }
 
@@ -1117,7 +1139,8 @@ async function pollActivity() {
 }
 
 onMounted(async () => {
-  document.addEventListener('keydown', handleKeyboardShortcuts)
+  captureRouteAction()
+  window.addEventListener('mc:chat-shortcut', handleChatShortcut)
   document.addEventListener('click', handleCodeCopy)
   startECharts()
   startKatex()
@@ -1130,6 +1153,7 @@ onMounted(async () => {
   mediumQuery.addEventListener('change', handleConvMediumChange)
   await Promise.all([loadAgents(), loadModelState(), loadConversations()])
   await hydrateStateFromRoute()
+  consumeRouteAction()
   activityPollTimer = window.setInterval(pollActivity, ACTIVITY_POLL_MS)
   elapsedTickTimer = window.setInterval(() => {
     if (activeCronRuns.value.length > 0) elapsedNow.value = Date.now()
@@ -1137,7 +1161,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  document.removeEventListener('keydown', handleKeyboardShortcuts)
+  window.removeEventListener('mc:chat-shortcut', handleChatShortcut)
   document.removeEventListener('click', handleCodeCopy)
   disposeECharts()
   disposeKatex()
@@ -1163,6 +1187,7 @@ onBeforeUnmount(() => {
 
 watch(() => route.query, () => {
   void hydrateStateFromRoute()
+  consumeRouteAction()
 })
 
 watch([selectedAgentId, currentConversationId], () => {
@@ -1195,7 +1220,7 @@ async function loadAgents() {
       selectedAgentId.value = agents.value[0].id
     }
   } catch (e) {
-    ElMessage.error(t('chat.loadAgentsFailed'))
+    mcToast.error(t('chat.loadAgentsFailed'))
   }
 }
 
@@ -1214,7 +1239,7 @@ async function loadModelState() {
     activeModels.value = activeRes.data || null
     enabledModels.value = enabledRes.data || []
   } catch (e) {
-    ElMessage.error(t('chat.loadModelFailed'))
+    mcToast.error(t('chat.loadModelFailed'))
     blockingPrompt.value = true
     recoverablePrompt.value = false
     return
@@ -1229,7 +1254,7 @@ async function loadModelState() {
       providersUnavailable.value = true
     } else {
       // Non-403 failure is still a real problem worth surfacing.
-      ElMessage.error(t('chat.loadModelFailed'))
+      mcToast.error(t('chat.loadModelFailed'))
     }
   }
   recomputePromptFlags()
@@ -1289,7 +1314,7 @@ async function loadConversations() {
     const res: any = await conversationApi.list()
     conversations.value = res.data || []
   } catch (e) {
-    ElMessage.error(t('chat.loadConversationsFailed'))
+    mcToast.error(t('chat.loadConversationsFailed'))
   }
 }
 
@@ -1496,7 +1521,7 @@ async function selectConversation(conv: Conversation) {
       await reconnectStream(requestedConvId)
     }
   } catch (e) {
-    ElMessage.error(t('chat.loadMessagesFailed'))
+    mcToast.error(t('chat.loadMessagesFailed'))
   }
 }
 
@@ -1518,7 +1543,7 @@ async function deleteConversation(conversationId: string) {
       currentConversationId.value = ''
     }
   } catch (e) {
-    ElMessage.error(t('chat.deleteConversationFailed'))
+    mcToast.error(t('chat.deleteConversationFailed'))
   }
 }
 
@@ -1603,7 +1628,7 @@ async function handleSendMessage(content: string) {
   const trimmed = content.trim().toLowerCase()
   if (trimmed === '/approve' || trimmed === '/deny') {
     if (!currentConversationId.value) {
-      ElMessage.warning('No active conversation')
+      mcToast.warning('No active conversation')
       inputText.value = ''
       chatInputRef.value?.clear?.()
       return
@@ -1614,7 +1639,7 @@ async function handleSendMessage(content: string) {
       m => m.role === 'assistant' && (m as any).metadata?.pendingApproval?.status === 'pending_approval'
     )
     if (!pendingMsg) {
-      ElMessage.warning('No pending approval to process')
+      mcToast.warning('No pending approval to process')
       inputText.value = ''
       chatInputRef.value?.clear?.()
       return
@@ -1638,7 +1663,7 @@ async function handleSendMessage(content: string) {
       console.error('Approval stream failed:', e)
       // 回滚乐观更新
       ;(pendingMsg as any).metadata.pendingApproval.status = 'pending_approval'
-      ElMessage.error(e?.message || 'Approval failed')
+      mcToast.error(e?.message || 'Approval failed')
     }
     return
   }
@@ -1745,7 +1770,7 @@ async function reconnectStream(conversationId: string) {
     await reconnectChatStream(conversationId)
   } catch (e) {
     console.error('[ChatConsole] Reconnect failed:', e)
-    ElMessage.warning(t('chat.reconnectFailed') || 'Stream reconnection failed')
+    mcToast.warning(t('chat.reconnectFailed') || 'Stream reconnection failed')
   }
 }
 
@@ -1786,7 +1811,7 @@ async function handleFileSelect(files: File[]) {
       })
     }
   } catch (e) {
-    ElMessage.error(t('chat.uploadFailed'))
+    mcToast.error(t('chat.uploadFailed'))
   } finally {
     uploadingAttachment.value = false
   }
@@ -1986,7 +2011,7 @@ function handleCodeCopy(e: MouseEvent) {
       if (textEl) textEl.textContent = t('chat.copy')
     }, 1500)
   }).catch(() => {
-    ElMessage.error(t('chat.copyFailed'))
+    mcToast.error(t('chat.copyFailed'))
   })
 }
 </script>

@@ -171,7 +171,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { mcToast } from '@/composables/useMcToast'
 import { mcConfirm } from '@/components/common/useConfirm'
 import { triggerApi, type TriggerSummary, workflowApi, type WorkflowSummary } from '@/api'
 import { useWorkspaceStore } from '@/stores/useWorkspaceStore'
@@ -361,7 +361,7 @@ async function save() {
     formOpen.value = false
     await reload()
   } catch (e) {
-    ElMessage.error(t('triggers.saveFailed', { msg: (e as Error).message }))
+    mcToast.error(t('triggers.saveFailed', { msg: (e as Error).message }))
   } finally {
     busy.value = false
   }
@@ -372,7 +372,7 @@ async function toggleEnabled(row: TriggerSummary) {
     await triggerApi.update(row.id, { ...row, enabled: !row.enabled })
     await reload()
   } catch (e) {
-    ElMessage.error(t('triggers.toggleFailed', { msg: (e as Error).message }))
+    mcToast.error(t('triggers.toggleFailed', { msg: (e as Error).message }))
   }
 }
 
@@ -388,7 +388,7 @@ async function remove(row: TriggerSummary) {
     await triggerApi.delete(row.id)
     await reload()
   } catch (e) {
-    ElMessage.error(t('triggers.deleteFailed', { msg: (e as Error).message }))
+    mcToast.error(t('triggers.deleteFailed', { msg: (e as Error).message }))
   }
 }
 

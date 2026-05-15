@@ -407,7 +407,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { mcToast } from '@/composables/useMcToast'
 import {
   ArrowDown,
   CloseBold,
@@ -1062,10 +1062,10 @@ function handleFeedbackAction(action: string) {
       `Timestamp: ${new Date(feedbackInfo.value?.timestamp || Date.now()).toISOString()}`,
     ].join('\n')
     copyToClipboard(lines).then(() => {
-      ElMessage.success(t('chat.feedback.reportCopied'))
+      mcToast.success(t('chat.feedback.reportCopied'))
     }).catch(() => {
       console.error('[feedback_event] copy failed:\n' + lines)
-      ElMessage.error(t('chat.feedback.reportFailed'))
+      mcToast.error(t('chat.feedback.reportFailed'))
     })
   }
 }

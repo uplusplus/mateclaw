@@ -654,7 +654,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { mcToast } from '@/composables/useMcToast'
 import { skillApi, skillInstallApi } from '@/api/index'
 import type { Skill, SkillRuntimeStatus, SkillSecurityFinding } from '@/types/index'
 import ImportHubDialog from '@/components/skill/ImportHubDialog.vue'
@@ -867,7 +867,7 @@ async function clearLessons() {
     await skillApi.clearLessons(detailSkill.value.id)
     detailLessonsRaw.value = ''
   } catch (e: any) {
-    ElMessage.error(typeof e === 'string' ? e : e?.message || t('skills.messages.deleteFailed'))
+    mcToast.error(typeof e === 'string' ? e : e?.message || t('skills.messages.deleteFailed'))
   }
 }
 
@@ -1046,7 +1046,7 @@ async function createSkillFromModal() {
       openDetailDrawer(fresh, 'overview', { editIdentity: true })
     }
   } catch (e: any) {
-    ElMessage.error(typeof e === 'string' ? e : e?.message || t('skills.messages.saveFailed'))
+    mcToast.error(typeof e === 'string' ? e : e?.message || t('skills.messages.saveFailed'))
   } finally {
     creating.value = false
   }
@@ -1124,9 +1124,9 @@ async function saveIdentity() {
       detailSkill.value = { ...detailSkill.value, ...updated }
     }
     editingIdentity.value = false
-    ElMessage.success(t('skills.messages.saveSuccess'))
+    mcToast.success(t('skills.messages.saveSuccess'))
   } catch (e: any) {
-    ElMessage.error(typeof e === 'string' ? e : e?.message || t('skills.messages.saveFailed'))
+    mcToast.error(typeof e === 'string' ? e : e?.message || t('skills.messages.saveFailed'))
   } finally {
     savingEdit.value = false
   }
@@ -1166,9 +1166,9 @@ async function saveBody() {
     // Body change → next resolve re-projects icon/version/author from the
     // new frontmatter, so refresh runtime status to pick those up.
     loadRuntimeStatus()
-    ElMessage.success(t('skills.detail.sourceSavedReprojection'))
+    mcToast.success(t('skills.detail.sourceSavedReprojection'))
   } catch (e: any) {
-    ElMessage.error(typeof e === 'string' ? e : e?.message || t('skills.messages.saveFailed'))
+    mcToast.error(typeof e === 'string' ? e : e?.message || t('skills.messages.saveFailed'))
   } finally {
     savingEdit.value = false
   }
@@ -1207,7 +1207,7 @@ async function deleteSkill(idOrSkill: string | number | Skill) {
     await skillInstallApi.uninstall(skill.name)
     await loadAll()
   } catch (e: any) {
-    ElMessage.error(typeof e === 'string' ? e : e?.message || t('skills.messages.deleteFailed'))
+    mcToast.error(typeof e === 'string' ? e : e?.message || t('skills.messages.deleteFailed'))
   }
 }
 
@@ -1217,14 +1217,14 @@ async function toggleSkill(skill: Skill) {
   // toast accurate when the backend would otherwise return err.skill.not_found
   // on builds that pre-date the rejectVirtualSkillMutation guard).
   if (isSkillRowVirtual(skill)) {
-    ElMessage.warning(t('skills.virtualReadonlyHint'))
+    mcToast.warning(t('skills.virtualReadonlyHint'))
     return
   }
   try {
     await skillApi.toggle(skill.id, !skill.enabled)
     await loadAll()
   } catch (e: any) {
-    ElMessage.error(typeof e === 'string' ? e : e?.message || t('skills.messages.toggleFailed'))
+    mcToast.error(typeof e === 'string' ? e : e?.message || t('skills.messages.toggleFailed'))
   }
 }
 
@@ -1233,9 +1233,9 @@ async function handleRefreshRuntime() {
   try {
     await skillApi.refreshRuntime()
     await loadRuntimeStatus()
-    ElMessage.success(t('skills.refreshSuccess'))
+    mcToast.success(t('skills.refreshSuccess'))
   } catch (e: any) {
-    ElMessage.error(typeof e === 'string' ? e : e?.message || t('skills.refreshFailed'))
+    mcToast.error(typeof e === 'string' ? e : e?.message || t('skills.refreshFailed'))
   } finally {
     refreshing.value = false
   }
@@ -1270,7 +1270,7 @@ async function rescanSkill(skill: Skill) {
       // Patch the row in-place so the panel updates without a full page reload.
       const idx = skills.value.findIndex(s => s.id === skill.id)
       if (idx >= 0) skills.value.splice(idx, 1, { ...skills.value[idx], ...updated })
-      ElMessage.success(
+      mcToast.success(
         updated.securityScanStatus === 'FAILED'
           ? t('skills.security.rescanStillFailed')
           : t('skills.security.rescanPassed')
@@ -1279,7 +1279,7 @@ async function rescanSkill(skill: Skill) {
     // Refresh runtime status too so the in-memory badges stay in sync.
     await loadRuntimeStatus()
   } catch (e: any) {
-    ElMessage.error(typeof e === 'string' ? e : e?.message || t('skills.security.rescanFailed'))
+    mcToast.error(typeof e === 'string' ? e : e?.message || t('skills.security.rescanFailed'))
   } finally {
     rescanning.value = { ...rescanning.value, [key]: false }
   }

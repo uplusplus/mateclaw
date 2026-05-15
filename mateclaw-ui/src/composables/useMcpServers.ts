@@ -1,6 +1,6 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { mcToast } from '@/composables/useMcToast'
 import { mcpApi } from '@/api/index'
 import type { McpServer, McpServerForm, McpTestResult } from '@/views/mcp/types'
 import { mcpCatalog, type McpCatalogEntry } from '@/views/mcp/catalog'
@@ -81,7 +81,7 @@ export function useMcpServers() {
         installed.value = (res?.data ?? []) as McpServer[]
       }
     } catch {
-      if (gen === loadGeneration) ElMessage.error(t('mcp.messages.loadFailed'))
+      if (gen === loadGeneration) mcToast.error(t('mcp.messages.loadFailed'))
     } finally {
       if (gen === loadGeneration) isLoading.value = false
     }
@@ -91,10 +91,10 @@ export function useMcpServers() {
     isRefreshing.value = true
     try {
       await mcpApi.refresh()
-      ElMessage.success(t('mcp.messages.refreshSuccess'))
+      mcToast.success(t('mcp.messages.refreshSuccess'))
       await reload()
     } catch (e: any) {
-      ElMessage.error(e?.message || t('mcp.messages.saveFailed'))
+      mcToast.error(e?.message || t('mcp.messages.saveFailed'))
     } finally {
       isRefreshing.value = false
     }
@@ -104,15 +104,15 @@ export function useMcpServers() {
     try {
       if (editing) {
         await mcpApi.update(editing.id, form)
-        ElMessage.success(t('mcp.messages.updateSuccess'))
+        mcToast.success(t('mcp.messages.updateSuccess'))
       } else {
         await mcpApi.create(form)
-        ElMessage.success(t('mcp.messages.createSuccess'))
+        mcToast.success(t('mcp.messages.createSuccess'))
       }
       await reload()
       return true
     } catch (e: any) {
-      ElMessage.error(e?.message || t('mcp.messages.saveFailed'))
+      mcToast.error(e?.message || t('mcp.messages.saveFailed'))
       return false
     }
   }
@@ -120,11 +120,11 @@ export function useMcpServers() {
   async function removeServer(server: McpServer): Promise<boolean> {
     try {
       await mcpApi.delete(server.id)
-      ElMessage.success(t('mcp.messages.deleteSuccess'))
+      mcToast.success(t('mcp.messages.deleteSuccess'))
       await reload()
       return true
     } catch (e: any) {
-      ElMessage.error(e?.message || t('mcp.messages.saveFailed'))
+      mcToast.error(e?.message || t('mcp.messages.saveFailed'))
       return false
     }
   }
@@ -132,10 +132,10 @@ export function useMcpServers() {
   async function toggleServer(server: McpServer) {
     try {
       await mcpApi.toggle(server.id, !server.enabled)
-      ElMessage.success(t('mcp.messages.toggleSuccess'))
+      mcToast.success(t('mcp.messages.toggleSuccess'))
       await reload()
     } catch (e: any) {
-      ElMessage.error(e?.message || t('mcp.messages.saveFailed'))
+      mcToast.error(e?.message || t('mcp.messages.saveFailed'))
     }
   }
 

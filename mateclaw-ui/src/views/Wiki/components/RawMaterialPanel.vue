@@ -286,7 +286,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { mcToast } from '@/composables/useMcToast'
 import { Download } from '@element-plus/icons-vue'
 import { useWikiStore } from '@/stores/useWikiStore'
 import { wikiApi } from '@/api/index'
@@ -550,7 +550,7 @@ async function uploadFile(kbId: number, file: File) {
   } catch (err: any) {
     item.status = 'error'
     item.errorMsg = err?.response?.data?.message || err?.message || t('wiki.uploadFailed', { name: file.name })
-    ElMessage.error(t('wiki.uploadFailed', { name: file.name }))
+    mcToast.error(t('wiki.uploadFailed', { name: file.name }))
   }
 }
 
@@ -653,7 +653,7 @@ async function downloadRaw(raw: { id: number; title?: string }) {
     setTimeout(() => URL.revokeObjectURL(url), 0)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    ElMessage.error(`${t('wiki.downloadFailed')}: ${msg}`)
+    mcToast.error(`${t('wiki.downloadFailed')}: ${msg}`)
   }
 }
 
