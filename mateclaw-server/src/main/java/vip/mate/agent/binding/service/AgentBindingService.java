@@ -423,6 +423,10 @@ public class AgentBindingService {
             "read_workspace_memory_file",
             "write_workspace_memory_file",
             "edit_workspace_memory_file",
+            // Keyword search over the same memory files. Agent-wide like the
+            // CRUD primitives above — a skill-bound agent must still be able
+            // to locate a fact by keyword instead of reading whole files.
+            "search_workspace_memory",
             // Skill discovery / dispatch — skills are docs, not callables;
             // these helpers let the LLM read SKILL.md / run scripts.
             "readSkillFile",
@@ -439,6 +443,11 @@ public class AgentBindingService {
             // delegateParallel / listAvailableAgents. Same dead-name bug.
             "delegateToAgent",
             "delegateParallel",
+            // Detached async delegation — spawn a sub-task that returns a
+            // task_id immediately, then retrieve its result in a later turn.
+            // Agent-wide like the synchronous delegation tools above.
+            "delegateAsync",
+            "taskOutput",
             "listAvailableAgents",
             // Document / media generation — agent-wide capabilities, never
             // declared inside any skill manifest. Pre-Phase-2b these were
