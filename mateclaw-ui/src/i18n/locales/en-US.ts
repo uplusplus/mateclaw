@@ -381,9 +381,7 @@ export default {
     activity: 'Activity',
     acpEndpoints: 'ACP Endpoints',
     settingsGroup: 'Settings',
-    agents: 'Digital Employees',
-    backstage: 'Backstage',
-    backstageTooltip: 'See what your employees are doing right now',
+    agents: 'Employees',
     security: 'Security',
     tokenUsage: 'Token Usage',
     cronJobs: 'Cron Jobs',
@@ -400,15 +398,15 @@ export default {
     appearance: 'Appearance & Language',
     roleUser: 'User',
     roleAdmin: 'Admin',
-    shortcutAgents: 'Agents',
+    shortcutAgents: 'Employees',
     shortcutNew: 'New',
     shortcutsHint: 'Ctrl+K {agents} | Ctrl+N {newAction}',
   },
   notifications: {
     pendingApprovals: '{n} tool call(s) pending approval',
   },
-  backstage: {
-    kicker: 'Backstage',
+  live: {
+    kicker: 'Live',
     title: 'See what your employees are doing',
     attention: 'Someone needs your attention',
     unknownAgent: 'Employee',
@@ -1026,12 +1024,12 @@ export default {
   },
   agents: {
     kicker: 'Employee Studio',
-    title: 'Digital Employees',
-    desc: 'Hire, train, and manage your digital employees',
+    title: 'Employees',
+    desc: 'Hire, train, and manage your employees',
     newAgent: 'Hire Employee',
-    live: {
-      atWork: '{n} at work — see backstage',
-      needsAttention: '{n} need attention — see backstage',
+    views: {
+      roster: 'Roster',
+      live: 'Live',
     },
     templates: {
       title: 'Choose a Role',

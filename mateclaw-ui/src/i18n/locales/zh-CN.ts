@@ -381,9 +381,7 @@ export default {
     activity: '活动记录',
     acpEndpoints: 'ACP 端点',
     settingsGroup: '设置',
-    agents: '数字员工',
-    backstage: '后台',
-    backstageTooltip: '看看你的数字员工此刻在做什么',
+    agents: '员工',
     security: '安全',
     tokenUsage: 'Token 统计',
     cronJobs: '定时任务',
@@ -400,7 +398,7 @@ export default {
     appearance: '外观与语言',
     roleUser: '用户',
     roleAdmin: '管理员',
-    shortcutAgents: '智能体',
+    shortcutAgents: '员工',
     shortcutNew: '新建',
     shortcutsHint: 'Ctrl+K {agents} | Ctrl+N {newAction}',
   },
@@ -918,12 +916,12 @@ export default {
   },
   agents: {
     kicker: '员工工作室',
-    title: '数字员工',
-    desc: '招募、培训和管理你的数字员工',
+    title: '员工',
+    desc: '招募、培训和管理你的员工',
     newAgent: '新员工',
-    live: {
-      atWork: '{n} 个在干活 · 看现场',
-      needsAttention: '{n} 个需要看看 · 去现场',
+    views: {
+      roster: '花名册',
+      live: '现场',
     },
     templates: {
       title: '选择岗位',
@@ -1720,8 +1718,8 @@ export default {
   notifications: {
     pendingApprovals: '{n} 个工具调用等待审批',
   },
-  backstage: {
-    kicker: '后台',
+  live: {
+    kicker: '现场',
     title: '看看你的数字员工在做什么',
     attention: '有几个需要你看看',
     unknownAgent: '员工',

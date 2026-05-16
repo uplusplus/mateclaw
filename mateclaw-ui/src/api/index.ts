@@ -229,8 +229,8 @@ export const activityApi = {
     http.get('/activity/feed', { params }),
 }
 
-// ==================== Backstage (admin runtime view) ====================
-export interface BackstageRunCard {
+// ==================== Live (admin runtime view) ====================
+export interface LiveRunCard {
   conversationId: string
   agentId: number | null
   agentName: string | null
@@ -252,7 +252,7 @@ export interface BackstageRunCard {
   subagentCount: number
 }
 
-export interface BackstageSubagentCard {
+export interface LiveSubagentCard {
   subagentId: string
   parentConversationId: string | null
   childConversationId: string | null
@@ -267,7 +267,7 @@ export interface BackstageSubagentCard {
   ageMs: number
 }
 
-export interface BackstageSummary {
+export interface LiveSummary {
   running: number
   stuck: number
   orphan: number
@@ -275,15 +275,15 @@ export interface BackstageSummary {
   subagentsActive: number
 }
 
-export interface BackstageSnapshot {
-  summary: BackstageSummary
-  runs: BackstageRunCard[]
-  subagents: BackstageSubagentCard[]
+export interface LiveSnapshot {
+  summary: LiveSummary
+  runs: LiveRunCard[]
+  subagents: LiveSubagentCard[]
   timestamp: number
 }
 
-export const backstageApi = {
-  snapshot: () => http.get<{ data: BackstageSnapshot }>('/admin/agent-runtime/snapshot'),
+export const liveApi = {
+  snapshot: () => http.get<{ data: LiveSnapshot }>('/admin/agent-runtime/snapshot'),
   stop: (conversationId: string) =>
     http.post(`/admin/agent-runtime/runs/${encodeURIComponent(conversationId)}/stop`),
   recycle: (conversationId: string) =>

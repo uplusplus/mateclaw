@@ -25,7 +25,7 @@
       </button>
 
       <div class="agent-selector">
-        <button class="agent-select-trigger" @click="agentDropdownOpen = !agentDropdownOpen" :title="`${$t('chat.selectAgent')} (⌘K)`">
+        <button class="agent-select-trigger" @click="agentDropdownOpen = !agentDropdownOpen" :title="$t('chat.selectAgent')">
           <span class="agent-select-trigger__icon" :style="{ color: agentIconColor(currentAgent?.icon) }"><SkillIcon :value="currentAgent?.icon" :size="24" :fallback="'🤖'" /></span>
           <span v-if="!convPanelCollapsed || isMobile" class="agent-select-trigger__name">{{ currentAgent?.name || $t('chat.selectAgent') }}</span>
           <svg v-if="!convPanelCollapsed || isMobile" class="agent-select-trigger__arrow" :class="{ open: agentDropdownOpen }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
@@ -994,23 +994,21 @@ const eligibleModels = computed(() => {
 // Global shortcuts (Ctrl+K agents, Ctrl+N new chat) live in MainLayout so they
 // work from any page; this view reacts to the dispatched event when mounted.
 function handleChatShortcut(e: Event) {
-  const action = (e as CustomEvent).detail as 'newChat' | 'selectAgent' | undefined
+  const action = (e as CustomEvent).detail as 'newChat' | undefined
   if (action === 'newChat') {
     newConversation()
     nextTick(() => chatInputRef.value?.focus?.())
-  } else if (action === 'selectAgent') {
-    agentDropdownOpen.value = !agentDropdownOpen.value
   }
 }
 
 // Cross-page hand-off from MainLayout's global shortcuts: read once on mount
 // (before loadAgents triggers syncRouteState, which would wipe the action key)
 // and apply after agents are loaded so the dropdown actually has something to show.
-let pendingRouteAction: 'newChat' | 'selectAgent' | '' = ''
+let pendingRouteAction: 'newChat' | '' = ''
 
 function captureRouteAction() {
   const action = route.query.action
-  if (action === 'newChat' || action === 'selectAgent') {
+  if (action === 'newChat') {
     pendingRouteAction = action
   }
 }
@@ -1021,8 +1019,6 @@ function applyPendingRouteAction() {
   if (action === 'newChat') {
     newConversation()
     nextTick(() => chatInputRef.value?.focus?.())
-  } else if (action === 'selectAgent') {
-    agentDropdownOpen.value = true
   }
 }
 

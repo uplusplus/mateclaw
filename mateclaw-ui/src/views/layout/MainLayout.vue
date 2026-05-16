@@ -53,11 +53,11 @@
               <span class="nav-icon" v-html="item.icon"></span>
               <span v-if="!effectiveCollapsed" class="nav-label">{{ item.label }}</span>
               <NavBadge
-                v-if="item.path === '/backstage'"
-                :dot="backstageAlertActive"
+                v-if="item.path === '/agents' && isAdminRole"
+                :dot="liveAlertActive"
                 tone="warning"
                 :collapsed="effectiveCollapsed"
-                :title="t('backstage.attention')"
+                :title="t('live.attention')"
               />
               <NavBadge
                 v-else-if="item.path === '/security' && isAdminRole"
@@ -229,12 +229,12 @@ async function fetchHealthStatus() {
   }
 }
 
-// Sidebar attention signals — admin-only. Both `/backstage` (stuck agents)
-// and `/security` (pending approvals) read from a shared 15s poller so
-// multiple consumers don't multiply HTTP traffic.
+// Sidebar attention signals — admin-only. Both `/agents` (stuck agents in the
+// Live view) and `/security` (pending approvals) read from a shared 15s poller
+// so multiple consumers don't multiply HTTP traffic.
 const isAdminRole = computed(() => (localStorage.getItem('role') || 'user') === 'admin')
 const { stuckAgents, pendingApprovals } = useNotificationCenter()
-const backstageAlertActive = computed(() => isAdminRole.value && stuckAgents.value > 0)
+const liveAlertActive = computed(() => isAdminRole.value && stuckAgents.value > 0)
 
 // 移动端状态
 const isMobile = ref(false)
@@ -258,17 +258,20 @@ function handleMediumChange(e: MediaQueryListEvent | MediaQueryList) {
   }
 }
 
-type ChatShortcutAction = 'newChat' | 'selectAgent'
-
 const shortcutsHintText = computed(() =>
   `Ctrl+K ${t('nav.shortcutAgents')} | Ctrl+N ${t('nav.shortcutNew')}`,
 )
 
-function fireChatShortcut(action: ChatShortcutAction) {
+function openAgentsMenu() {
+  if (!workspaceStore.can('manage:agents' as never)) return
+  if (route.path !== '/agents') router.push('/agents')
+}
+
+function fireNewChatShortcut() {
   if (route.path === '/chat') {
-    window.dispatchEvent(new CustomEvent('mc:chat-shortcut', { detail: action }))
+    window.dispatchEvent(new CustomEvent('mc:chat-shortcut', { detail: 'newChat' }))
   } else {
-    router.push({ path: '/chat', query: { action } })
+    router.push({ path: '/chat', query: { action: 'newChat' } })
   }
 }
 
@@ -290,7 +293,11 @@ function onGlobalKeydown(e: KeyboardEvent) {
   // still want to let the chat input handle native paste / undo unblocked.
   if (key === 'n' && isEditableTarget(e.target)) return
   e.preventDefault()
-  fireChatShortcut(key === 'k' ? 'selectAgent' : 'newChat')
+  if (key === 'k') {
+    openAgentsMenu()
+  } else {
+    fireNewChatShortcut()
+  }
 }
 
 onMounted(async () => {
@@ -318,7 +325,7 @@ onMounted(async () => {
 
   // Fetch initial health status for sidebar indicator
   fetchHealthStatus()
-  // Sidebar attention counts (backstage / security) are driven by
+  // Sidebar attention counts (live / security) are driven by
   // useNotificationCenter — it polls when admins are mounted.
 })
 
@@ -419,13 +426,6 @@ const navGroups = computed(() => [
         label: t('nav.agents'),
         icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>`,
         requiredCapability: 'manage:agents',
-      },
-      {
-        path: '/backstage',
-        label: t('nav.backstage'),
-        tooltip: t('nav.backstageTooltip'),
-        icon: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`,
-        globalAdmin: true,
       },
       {
         path: '/wiki',
