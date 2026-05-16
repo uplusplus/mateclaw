@@ -264,28 +264,30 @@ class AsyncTaskServiceOneShotTest {
         ConcurrentHashMap<String, ?> activePolls = getInternalMap("activePolls");
         ConcurrentHashMap<String, ?> pollTaskToConv = getInternalMap("pollTaskToConv");
 
-        AtomicReference<String> taskIdRef = new AtomicReference<>();
         AtomicBoolean observedActive = new AtomicBoolean();
         AtomicBoolean observedConvLink = new AtomicBoolean();
+        AtomicReference<String> observedKey = new AtomicReference<>();
         CountDownLatch probed = new CountDownLatch(1);
 
-        // The Callable acts as a probe: if the latch invariant holds, both
-        // bookkeeping maps already contain this taskId by the time the body
-        // runs (calling thread put before countDown, worker awaited
-        // countDown before reaching here). If the latch were removed, the
-        // worker could race ahead, observe empty maps, and finish — then the
-        // calling thread's put would leak a ghost entry.
+        // The Callable acts as a probe: if the latch invariant holds, the
+        // calling thread has already put this task into both bookkeeping
+        // maps by the time the worker runs (put happens before countDown,
+        // the worker awaits countDown). The probe cannot read its own taskId
+        // — submitOneShot only hands it back to the caller *after* releasing
+        // the latch — so it instead checks that each map holds exactly the
+        // one entry this single-task test created, and records the enrolled
+        // key for an after-the-fact identity check. If the latch were
+        // removed, the worker could race ahead and observe empty maps.
         Callable<String> work = () -> {
-            String tid = taskIdRef.get();
-            observedActive.set(tid != null && activePolls.containsKey(tid));
-            observedConvLink.set(tid != null && pollTaskToConv.containsKey(tid));
+            observedActive.set(activePolls.size() == 1);
+            observedConvLink.set(pollTaskToConv.size() == 1);
+            observedKey.set(activePolls.keySet().stream().findFirst().orElse(null));
             probed.countDown();
             return "ok";
         };
 
         AsyncTaskEntity entity = service.submitOneShot(
                 "agent_delegate", "conv-latch", null, "{}", "user-1", work);
-        taskIdRef.set(entity.getTaskId());
 
         assertThat(probed.await(5, TimeUnit.SECONDS))
                 .as("probe must run within timeout")
@@ -293,11 +295,14 @@ class AsyncTaskServiceOneShotTest {
         awaitDone(entity.getTaskId(), 5_000);
 
         assertThat(observedActive)
-                .as("activePolls must contain taskId when work.call() begins")
+                .as("activePolls must hold the task when work.call() begins")
                 .isTrue();
         assertThat(observedConvLink)
-                .as("pollTaskToConv must contain taskId when work.call() begins")
+                .as("pollTaskToConv must hold the task when work.call() begins")
                 .isTrue();
+        assertThat(observedKey)
+                .as("the key enrolled in activePolls must be this task's id")
+                .hasValue(entity.getTaskId());
         assertActiveMapsEmpty();
     }
 
