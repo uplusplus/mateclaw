@@ -174,6 +174,33 @@ class WorkspaceMemoryArchiveServiceTest {
     }
 
     @Test
+    @DisplayName("Daily filename matching the digit shape but not a real date is rejected")
+    void impossibleCalendarDateRejected() throws Exception {
+        wireAgent(1L, 10L);
+        when(workspaceFileService.getFile(1L, "memory/2026-05-12.md"))
+                .thenReturn(null);
+
+        byte[] zip = makeZip(Map.of(
+                "memory/2026-05-12.md", "real date → create",
+                "memory/2026-13-99.md", "month 13 / day 99 → reject",
+                "memory/2026-02-30.md", "feb 30 does not exist → reject"));
+
+        WorkspaceMemoryArchiveService.ImportPreview preview =
+                service.previewImport(1L, 10L, zip);
+
+        assertThat(preview.willCreate()).containsExactlyInAnyOrder("memory/2026-05-12.md");
+        assertThat(preview.willSkip())
+                .extracting(WorkspaceMemoryArchiveService.SkipEntry::filename,
+                        WorkspaceMemoryArchiveService.SkipEntry::reason)
+                .contains(
+                        org.assertj.core.groups.Tuple.tuple("memory/2026-13-99.md", "not in whitelist"),
+                        org.assertj.core.groups.Tuple.tuple("memory/2026-02-30.md", "not in whitelist"));
+
+        verify(workspaceFileService, never()).saveFile(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
     @DisplayName("Preview surfaces old vs new hash + size for updated files")
     void previewExposesDiffMetadata() throws Exception {
         wireAgent(1L, 10L);

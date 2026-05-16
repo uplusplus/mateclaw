@@ -17,6 +17,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -210,7 +212,23 @@ public class WorkspaceMemoryArchiveService {
     }
 
     private static boolean isAllowedFilename(String name) {
-        return TOP_LEVEL_WHITELIST.contains(name) || DAILY_FILENAME.matcher(name).matches();
+        if (TOP_LEVEL_WHITELIST.contains(name)) {
+            return true;
+        }
+        if (!DAILY_FILENAME.matcher(name).matches()) {
+            return false;
+        }
+        // The regex only constrains digit shape, so structurally-valid but
+        // non-existent dates (memory/2026-13-99.md, memory/2026-02-30.md)
+        // would slip through. Parse the date to reject calendar dates that
+        // cannot occur, keeping the daily ledger namespace clean.
+        String date = name.substring("memory/".length(), name.length() - ".md".length());
+        try {
+            LocalDate.parse(date);
+            return true;
+        } catch (DateTimeParseException e) {
+            return false;
+        }
     }
 
     /**
