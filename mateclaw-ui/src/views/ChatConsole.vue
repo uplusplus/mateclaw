@@ -25,35 +25,14 @@
       </button>
 
       <div class="agent-selector">
-        <button class="agent-select-trigger" @click="agentDropdownOpen = !agentDropdownOpen" :title="$t('chat.selectAgent')">
-          <span class="agent-select-trigger__icon" :style="{ color: agentIconColor(currentAgent?.icon) }"><SkillIcon :value="currentAgent?.icon" :size="24" :fallback="'🤖'" /></span>
-          <span v-if="!convPanelCollapsed || isMobile" class="agent-select-trigger__name">{{ currentAgent?.name || $t('chat.selectAgent') }}</span>
-          <svg v-if="!convPanelCollapsed || isMobile" class="agent-select-trigger__arrow" :class="{ open: agentDropdownOpen }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-        </button>
-        <Transition name="fade">
-          <div v-if="agentDropdownOpen" class="agent-dropdown-backdrop" @click="agentDropdownOpen = false"></div>
-        </Transition>
-        <Transition name="agent-dropdown">
-          <div v-if="agentDropdownOpen" class="agent-dropdown">
-            <div
-              v-for="agent in agents"
-              :key="agent.id"
-              class="agent-dropdown-item"
-              :class="{ active: String(agent.id) === String(selectedAgentId) }"
-              @click="selectAgent(agent)"
-            >
-              <span class="agent-dropdown-item__icon" :style="{ color: agentIconColor(agent.icon) }"><SkillIcon :value="agent.icon" :size="18" :fallback="'🤖'" /></span>
-              <div class="agent-dropdown-item__info">
-                <span class="agent-dropdown-item__name">{{ agent.name }}</span>
-                <span class="agent-dropdown-item__desc">{{ agentTagline(agent) }}</span>
-              </div>
-              <span v-if="String(agent.id) === String(selectedAgentId)" class="agent-dropdown-item__check">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-              </span>
-            </div>
-            <div v-if="agents.length === 0" class="agent-dropdown-empty">{{ $t('chat.loadingAgents') }}</div>
-          </div>
-        </Transition>
+        <AgentPickerDialog
+          block
+          :model-value="selectedAgentId"
+          :agents="agents"
+          :compact="convPanelCollapsed && !isMobile"
+          :placeholder="$t('chat.selectAgent')"
+          @change="onAgentPicked"
+        />
       </div>
 
       <div class="conversation-list">
@@ -356,6 +335,7 @@ import type { Conversation, Agent, ModelConfig, ProviderInfo, ActiveModelsInfo, 
 import MessageList from '@/components/chat/MessageList.vue'
 import RecoverableModelBanner from '@/components/chat/RecoverableModelBanner.vue'
 import SkillIcon from '@/components/common/SkillIcon.vue'
+import AgentPickerDialog from '@/components/common/AgentPickerDialog.vue'
 import { parsePrompt, deriveTagline } from '@/utils/agentPromptProfile'
 import { agentIconColor } from '@/utils/agentIconColor'
 import ChatInput from '@/components/chat/ChatInput.vue'
@@ -467,14 +447,12 @@ const thinkingLevel = computed(() => thinkingEnabled.value ? 'high' : 'off')
 watch(thinkingEnabled, (v) => localStorage.setItem('mateclaw_thinking', v ? 'on' : 'off'))
 
 // Dropdowns & menus
-const agentDropdownOpen = ref(false)
-
 const headerMenuOpen = ref(false)
 
-function selectAgent(agent: Agent) {
-  agentDropdownOpen.value = false
-  if (String(agent.id) !== String(selectedAgentId.value)) {
-    selectedAgentId.value = agent.id
+function onAgentPicked(value: string | number | null) {
+  if (value == null) return
+  if (String(value) !== String(selectedAgentId.value)) {
+    selectedAgentId.value = value
     newConversation()
   }
 }
@@ -1557,8 +1535,6 @@ async function clearMessages() {
   }
 }
 
-// onAgentChange removed — replaced by selectAgent()
-
 // onModelChange removed — replaced by selectModel()
 
 function goToModelSettings(providerId?: string) {
@@ -2090,19 +2066,6 @@ function handleCodeCopy(e: MouseEvent) {
   padding: 10px 6px 12px;
 }
 
-.conversation-panel.conv-collapsed .agent-select-trigger {
-  justify-content: center;
-  padding: 8px;
-}
-
-.conversation-panel.conv-collapsed .agent-dropdown {
-  position: fixed;
-  top: auto;
-  left: 62px;
-  right: auto;
-  min-width: 260px;
-}
-
 .conversation-panel.conv-collapsed .conv-item {
   justify-content: center;
   padding: 10px 6px;
@@ -2187,131 +2150,11 @@ function handleCodeCopy(e: MouseEvent) {
   position: relative;
 }
 
-.agent-select-trigger {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border: 1px solid var(--mc-border);
-  border-radius: 12px;
-  font-size: 13px;
-  color: var(--mc-text-primary);
-  background: var(--mc-bg-sunken);
-  cursor: pointer;
-  outline: none;
-  transition: all 0.15s;
-}
-
-.agent-select-trigger:hover {
-  border-color: var(--mc-primary);
-  background: var(--mc-bg-elevated);
-}
-
-.agent-select-trigger__icon {
-  font-size: 18px;
-  line-height: 1;
-}
-
-.agent-select-trigger__name {
-  flex: 1;
-  text-align: left;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.agent-select-trigger__arrow {
-  flex-shrink: 0;
-  color: var(--mc-text-tertiary);
-  transition: transform 0.2s;
-}
-
-.agent-select-trigger__arrow.open {
-  transform: rotate(180deg);
-}
-
-.agent-dropdown-backdrop,
 .model-dropdown-backdrop,
 .header-menu-backdrop {
   position: fixed;
   inset: 0;
   z-index: 99;
-}
-
-.agent-dropdown {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 12px;
-  right: 12px;
-  min-width: 240px;
-  z-index: 100;
-  background: var(--mc-bg-elevated);
-  border: 1px solid var(--mc-border);
-  border-radius: 14px;
-  padding: 6px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-  max-height: 320px;
-  overflow-y: auto;
-}
-
-.agent-dropdown-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: background 0.12s;
-}
-
-.agent-dropdown-item:hover {
-  background: var(--mc-bg-sunken);
-}
-
-.agent-dropdown-item.active {
-  background: var(--mc-primary-bg);
-}
-
-.agent-dropdown-item__icon {
-  font-size: 24px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.agent-dropdown-item__info {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.agent-dropdown-item__name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--mc-text-primary);
-}
-
-.agent-dropdown-item__desc {
-  font-size: 11px;
-  color: var(--mc-text-tertiary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.agent-dropdown-item__check {
-  flex-shrink: 0;
-  color: var(--mc-primary);
-}
-
-.agent-dropdown-empty {
-  padding: 16px;
-  text-align: center;
-  font-size: 13px;
-  color: var(--mc-text-tertiary);
 }
 
 .agent-dropdown-enter-active {

@@ -6,12 +6,7 @@
     <div class="workspace-header workspace-header--compact">
       <h1 class="page-title page-title--compact">{{ t('agentContext.title') }}</h1>
       <div class="header-actions mc-surface-card">
-        <select v-model="selectedAgentId" class="agent-select" @change="onAgentChange">
-          <option value="" disabled>{{ t('agentContext.selectAgent') }}</option>
-          <option v-for="agent in agents" :key="agent.id" :value="agent.id">
-            {{ plainTextIcon(agent.icon) }} {{ agent.name }}
-          </option>
-        </select>
+        <AgentPickerDialog v-model="selectedAgentId" :agents="agents" />
       </div>
     </div>
 
@@ -334,7 +329,7 @@ import { copyToClipboard } from '@/utils/clipboard'
 import type { Agent, WorkspaceFile } from '@/types/index'
 import { useMarkdownRenderer } from '@/composables/useMarkdownRenderer'
 import { handleMermaidDownload } from '@/composables/useMermaidRenderer'
-import { plainTextIcon } from '@/composables/usePixelarticons'
+import AgentPickerDialog from '@/components/common/AgentPickerDialog.vue'
 
 const { renderMarkdown } = useMarkdownRenderer()
 
@@ -450,10 +445,6 @@ async function loadAgents() {
   } catch {
     mcToast.error(t('agentContext.loadFailed'))
   }
-}
-
-function onAgentChange() {
-  // watch 已处理
 }
 
 async function fetchFiles() {
@@ -737,8 +728,6 @@ function formatTime(time?: string): string {
 .page-title--compact { font-size: clamp(24px, 2.5vw, 32px); font-weight: 800; letter-spacing: -0.03em; margin: 0; }
 .page-desc { font-size: 15px; color: var(--mc-text-secondary); margin: 0; line-height: 1.7; max-width: 720px; }
 .header-actions { display: flex; gap: 8px; align-items: center; padding: 12px; border-radius: 18px; flex-shrink: 0; }
-.agent-select { padding: 10px 14px; border: 1px solid var(--mc-border); border-radius: 12px; background: var(--mc-bg-elevated); color: var(--mc-text-primary); font-size: 14px; outline: none; min-width: 240px; cursor: pointer; }
-.agent-select:focus { border-color: var(--mc-primary); }
 
 /* 空状态 */
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; text-align: center; }
@@ -1047,7 +1036,8 @@ function formatTime(time?: string): string {
     min-width: 0;
   }
 
-  .agent-select {
+  .header-actions :deep(.mc-agent-picker),
+  .header-actions :deep(.mc-agent-picker__trigger) {
     width: 100%;
     min-width: 0;
   }
