@@ -583,6 +583,44 @@ export const agentContextApi = {
     http.get(`/agents/${agentId}/workspace/prompt-files`),
   setPromptFiles: (agentId: string | number, files: string[]) =>
     http.put(`/agents/${agentId}/workspace/prompt-files`, { files }),
+
+  // Memory snapshot — export downloads a ZIP via native fetch (axios R<T>
+  // interceptor would mis-handle the binary body); import + preview go
+  // through axios with multipart so the standard auth / workspace headers
+  // flow automatically.
+  exportMemorySnapshot: async (agentId: string | number): Promise<Blob> => {
+    const token = localStorage.getItem('token')
+    const workspaceId = localStorage.getItem('mc-workspace-id')
+    const headers: Record<string, string> = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+    if (workspaceId) headers['X-Workspace-Id'] = workspaceId
+    const url = `/api/v1/agents/${agentId}/workspace/memory/export`
+    const response = await fetch(url, { headers })
+    if (!response.ok) {
+      // Try to parse the standard R<T> error envelope for a useful message.
+      let detail = `HTTP ${response.status}`
+      try {
+        const body = await response.json()
+        if (body && typeof body.msg === 'string') detail = body.msg
+      } catch { /* ignore — non-JSON body */ }
+      throw new Error(detail)
+    }
+    return response.blob()
+  },
+  previewImportMemorySnapshot: (agentId: string | number, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return http.post(`/agents/${agentId}/workspace/memory/import/preview`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+  applyImportMemorySnapshot: (agentId: string | number, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return http.post(`/agents/${agentId}/workspace/memory/import`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
 }
 
 // ==================== Security ====================
