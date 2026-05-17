@@ -312,13 +312,17 @@ public class AgentBindingService {
      * tools and skill-expanded tools:
      * <ul>
      *   <li>{@link #SYSTEM_LEVEL_TOOLS} — agent-wide primitives.</li>
-     *   <li>Every currently-bindable MCP tool (any tool with
-     *       {@code source="mcp"} and {@code available=true} in the picker).
-     *       MCP servers are administrator-level capabilities; once enabled
-     *       globally they should not be silently hidden from an agent that
-     *       happens to have any other binding. To deny a specific MCP tool
-     *       to a specific agent, use the tool-guard deny path applied
-     *       upstream in {@code AgentGraphBuilder}.</li>
+     *   <li>Every currently-bindable MCP tool ({@code source="mcp"},
+     *       {@code available=true} in the picker) — but only when the agent
+     *       has not ticked any MCP tool itself. MCP servers are
+     *       administrator-level capabilities, so an agent that bound merely
+     *       a skill or a built-in tool keeps full MCP access. Once the
+     *       operator ticks specific MCP rows, that is read as a deliberate
+     *       per-agent scope: only the ticked MCP tools stay and the rest
+     *       are not auto-joined, so a role can be limited to a fixed MCP
+     *       tool set. To hide a single MCP tool from an agent that ticked
+     *       no MCP row, use the tool-guard deny path applied upstream in
+     *       {@code AgentGraphBuilder}.</li>
      * </ul>
      */
     public Set<String> getEffectiveToolNames(Long agentId) {
@@ -361,16 +365,22 @@ public class AgentBindingService {
         // (the LLM stops being able to write to LESSONS.md / MEMORY.md).
         merged.addAll(SYSTEM_LEVEL_TOOLS);
 
-        // Enabled MCP server tools auto-join the allowlist for the same
-        // reason SYSTEM_LEVEL_TOOLS does: MCP servers are an
-        // administrator-enabled capability, not a per-agent opt-in. Without
-        // this union, an agent with any skill or built-in tool bound would
-        // silently lose every MCP tool — users hit this when they bound one
-        // built-in tool, didn't tick the MCP rows, and observed "only
-        // built-in tools work". Operators who need to hide a specific MCP
-        // tool from a specific agent still have the tool-guard deny path
-        // (AgentGraphBuilder applies withDeniedToolsFiltered before this).
-        merged.addAll(getEnabledMcpToolNames());
+        // MCP tools. An agent that bound only a skill or a built-in tool
+        // and ticked no MCP row keeps full access to every enabled MCP
+        // tool: MCP servers are an administrator-enabled capability and
+        // must not silently vanish just because some unrelated binding
+        // exists. But once the operator ticks specific MCP rows, that is a
+        // deliberate per-agent scope — only those MCP tools (already merged
+        // via directTools above) stay, and the rest are not auto-joined, so
+        // a role can be limited to a fixed MCP tool set. To instead hide a
+        // single MCP tool from an agent that ticked no MCP row, use the
+        // tool-guard deny path applied upstream in AgentGraphBuilder.
+        Set<String> enabledMcpTools = getEnabledMcpToolNames();
+        boolean agentScopedMcpExplicitly =
+                directTools != null && !Collections.disjoint(directTools, enabledMcpTools);
+        if (!agentScopedMcpExplicitly) {
+            merged.addAll(enabledMcpTools);
+        }
 
         return merged;
     }

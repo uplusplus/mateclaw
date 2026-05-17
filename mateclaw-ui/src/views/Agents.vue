@@ -395,18 +395,22 @@
                 <template v-for="group in filteredAvailableToolGroups" :key="group.groupId">
                   <div class="binding-group-header">
                     <span>{{ group.label }}</span>
-                    <!-- MCP groups: ticking is now record-only — enabled MCP
-                         tools auto-join the agent's effective allowlist
-                         (server is admin-enabled at the system level). Tell
-                         the user that here so they don't think unchecked
-                         MCP rows are disabled. To deny a specific MCP tool,
-                         users still have Security → Tool Guard. -->
+                    <!-- MCP group badge reflects the agent's MCP scope:
+                         with no MCP tool ticked, every enabled MCP tool is
+                         available by default; once any MCP tool is ticked,
+                         the agent is restricted to the ticked set. To deny
+                         an MCP tool when none are ticked, users still have
+                         Security → Tool Guard. -->
                     <span
                       v-if="group.groupId && group.groupId.startsWith('mcp:')"
                       class="binding-group-note"
-                      :title="t('agents.binding.mcpAutoIncludedTooltip')"
+                      :title="anyMcpToolSelected
+                        ? t('agents.binding.mcpScopedTooltip')
+                        : t('agents.binding.mcpAutoIncludedTooltip')"
                     >
-                      {{ t('agents.binding.mcpAutoIncludedBadge') }}
+                      {{ anyMcpToolSelected
+                        ? t('agents.binding.mcpScopedBadge')
+                        : t('agents.binding.mcpAutoIncludedBadge') }}
                     </span>
                   </div>
                   <label
@@ -637,6 +641,16 @@ const availableToolGroups = computed(() => {
 })
 
 const filteredAvailableToolGroups = computed(() => filterAgentToolGroups(availableToolGroups.value, toolBindingSearch.value))
+
+/**
+ * True when at least one ticked tool is an MCP tool. The backend reads
+ * this as a deliberate per-agent MCP scope: only ticked MCP tools stay
+ * in the effective allowlist. When false, every enabled MCP tool is
+ * auto-included instead. Drives the MCP group badge in the picker.
+ */
+const anyMcpToolSelected = computed(() =>
+  availableTools.value.some((tool) => tool.source === 'mcp' && selectedToolNames.value.includes(tool.name)),
+)
 
 /**
  * Manual checkbox handler — replaces v-model on the picker row so that
