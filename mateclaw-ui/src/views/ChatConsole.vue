@@ -606,6 +606,25 @@ function markConversationViewed(conversationId: string | undefined, lastActiveTi
 }
 
 const currentRuntimeModel = computed(() => {
+  // Bind to the per-conversation active model — the same source the model
+  // selector reads — so the indicator updates the instant the user switches.
+  // Reading the global defaultModel here left the indicator frozen on the
+  // default while the selector moved.
+  const providerId = activeModels.value?.activeLlm?.providerId
+  const modelName = activeModels.value?.activeLlm?.model
+  if (providerId && modelName) {
+    const provider = providers.value.find((p) => p.id === providerId)
+    const all = provider ? [...(provider.models || []), ...(provider.extraModels || [])] : []
+    const hit = all.find((m) => m.id === modelName || m.name === modelName)
+    if (hit) return `${hit.name || hit.id} (${hit.id})`
+    // Viewer-level users get an empty providers list — resolve via /models/enabled.
+    const em = enabledModels.value.find(
+      (m) => m.provider === providerId && (m.modelName === modelName || m.name === modelName)
+    )
+    if (em) return em.name ? `${em.name} (${em.modelName})` : em.modelName
+    return modelName
+  }
+  // No active model resolved yet — fall back to the global default, then the agent.
   if (defaultModel.value?.name && defaultModel.value?.modelName) {
     return `${defaultModel.value.name} (${defaultModel.value.modelName})`
   }
