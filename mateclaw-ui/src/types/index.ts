@@ -66,6 +66,10 @@ export interface Conversation {
   streamStatus?: 'idle' | 'running'
   source?: string
   pinned?: number
+  /** Provider id of the model this conversation is pinned to (per-conversation model). */
+  modelProvider?: string
+  /** Model id this conversation is pinned to. Paired with modelProvider. */
+  modelName?: string
   lastActiveTime?: string
   updateTime?: string
   createTime?: string
