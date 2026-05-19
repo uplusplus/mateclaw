@@ -65,10 +65,10 @@ public class WikiContentNormalizer {
      * Strip nav/footer/script/style/aside and ad-like classes from HTML, then
      * return readable text.
      * <p>
-     * The output never carries markup: input that still contains tags is parsed
-     * and stripped; input that is already tag-free is returned with whitespace
-     * cleanup only. When the document cannot be parsed (too large, or jsoup
-     * throws) it is run through {@link #stripMarkupLossy(String)} so that
+     * The output never carries markup: input that still contains element
+     * structure is parsed and stripped; input with no element structure is
+     * reduced to its text content. When the document cannot be parsed (too
+     * large, or jsoup throws) it is run through {@link #stripMarkupLossy(String)} so that
      * script/style bodies and tags are dropped without a full parse — the raw
      * markup is never passed through verbatim.
      */
@@ -92,7 +92,15 @@ public class WikiContentNormalizer {
             boolean hasMarkup = (body != null && !body.children().isEmpty())
                     || (head != null && !head.children().isEmpty());
             if (!hasMarkup) {
-                return collapseBlankLines(rawHtml);
+                // No element structure — text that was already tag-stripped upstream
+                // (an extracted .html/.htm upload). Return its whole text rather than
+                // the raw string: wholeText() keeps the original line breaks (so ATX
+                // headings stay on their own lines) but carries no tags, no attributes
+                // and no comment nodes. The raw string must never be returned here —
+                // a bare <html>/<body> skeleton can still hold event-handler
+                // attributes that would otherwise leak through verbatim.
+                Element textRoot = body != null ? body : doc;
+                return collapseBlankLines(textRoot.wholeText());
             }
 
             // Drop structural noise.
