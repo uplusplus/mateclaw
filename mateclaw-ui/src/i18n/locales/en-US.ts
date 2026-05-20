@@ -181,6 +181,7 @@ export default {
     startNewChat: 'Start a new chat above',
     messages: '{count} messages',
     configModel: 'Configure Model',
+    openSessions: 'Session Admin',
     clearMessages: 'Clear Messages',
     goToModelSettings: 'Go to Model Settings',
     configModelFirst: 'Please configure a model first',

@@ -181,6 +181,7 @@ export default {
     startNewChat: '开始新对话吧',
     messages: '{count} 条消息',
     configModel: '配置模型',
+    openSessions: '会话管理',
     clearMessages: '清空消息',
     goToModelSettings: '前往模型设置',
     configModelFirst: '请先配置模型',
