@@ -56,6 +56,8 @@ class ChannelManagerReconcileTest {
                 mock(vip.mate.channel.notification.ApprovalNotificationService.class),
                 mock(vip.mate.channel.wecom.cards.WeComCardDispatcher.class),
                 mock(vip.mate.channel.wecom.WeComKeepaliveScheduler.class),
+                mock(vip.mate.channel.feishu.FeishuMediaUploader.class),
+                mock(vip.mate.channel.media.GeneratedFileScrubber.class),
                 election);
         adapter = new TrackingAdapter();
     }

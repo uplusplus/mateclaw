@@ -76,6 +76,23 @@ public class ChannelManager {
     private final vip.mate.channel.wecom.WeComKeepaliveScheduler weComKeepaliveScheduler;
 
     /**
+     * Feishu SDK-backed media uploader. Wired into
+     * {@link vip.mate.channel.feishu.FeishuChannelAdapter} so every
+     * outbound image / file / audio / video flows through
+     * {@code oapi-sdk} multipart and the per-platform size policy
+     * instead of hand-rolled HTTP.
+     */
+    private final vip.mate.channel.feishu.FeishuMediaUploader feishuMediaUploader;
+
+    /**
+     * Channel-shared scrubber that converts agent-emitted
+     * {@code /api/v1/files/generated/{id}} URLs into native channel
+     * attachments. Same instance is also injected into WeCom in a
+     * follow-up patch; today only Feishu consumes it.
+     */
+    private final vip.mate.channel.media.GeneratedFileScrubber generatedFileScrubber;
+
+    /**
      * Distributed leader election. Channels whose adapter reports
      * {@link ChannelAdapter#requiresSingleLeader()} are gated on a lease so
      * only one node opens the upstream WebSocket / long-poll at a time.
@@ -1140,7 +1157,8 @@ public class ChannelManager {
         return switch (type) {
             case "web" -> new WebChannelAdapter(channel, messageRouter, objectMapper);
             case "dingtalk" -> new DingTalkChannelAdapter(channel, messageRouter, objectMapper, generatedFileCache);
-            case "feishu" -> new FeishuChannelAdapter(channel, messageRouter, objectMapper);
+            case "feishu" -> new FeishuChannelAdapter(channel, messageRouter, objectMapper,
+                    feishuMediaUploader, generatedFileScrubber);
             case "telegram" -> new TelegramChannelAdapter(channel, messageRouter, objectMapper);
             case "discord" -> new DiscordChannelAdapter(channel, messageRouter, objectMapper);
             case "wecom" -> new WeComChannelAdapter(channel, messageRouter, objectMapper,

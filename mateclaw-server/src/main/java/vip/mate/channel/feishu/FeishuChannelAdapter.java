@@ -9,6 +9,11 @@ import vip.mate.channel.AbstractChannelAdapter;
 import vip.mate.channel.ChannelMessage;
 import vip.mate.channel.ChannelMessageRouter;
 import vip.mate.channel.ExponentialBackoff;
+import vip.mate.channel.media.GeneratedFileScrubber;
+import vip.mate.channel.media.MediaSource;
+import vip.mate.channel.media.MediaUploadException;
+import vip.mate.channel.media.MediaUploadRequest;
+import vip.mate.channel.media.MediaUploadResult;
 import vip.mate.channel.model.ChannelEntity;
 import vip.mate.workspace.conversation.model.MessageContentPart;
 
@@ -117,11 +122,27 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
     /** Negative-cache window for {@link #getBotOpenId()} failures (60 s). */
     private static final long BOT_OPENID_FAILURE_BACKOFF_MS = 60_000L;
 
+    /** SDK-backed uploader for image / file / audio / video parts. Nullable for legacy callers. */
+    private final FeishuMediaUploader mediaUploader;
+
+    /** Scrubs {@code /api/v1/files/generated/{id}} URLs into native attachments. Nullable for legacy callers. */
+    private final GeneratedFileScrubber generatedFileScrubber;
+
     public FeishuChannelAdapter(ChannelEntity channelEntity,
                                 ChannelMessageRouter messageRouter,
                                 ObjectMapper objectMapper) {
+        this(channelEntity, messageRouter, objectMapper, null, null);
+    }
+
+    public FeishuChannelAdapter(ChannelEntity channelEntity,
+                                ChannelMessageRouter messageRouter,
+                                ObjectMapper objectMapper,
+                                FeishuMediaUploader mediaUploader,
+                                GeneratedFileScrubber generatedFileScrubber) {
         super(channelEntity, messageRouter, objectMapper);
-        // 飞书 WebSocket 重连：2s→4s→8s→16s→30s，无限重试
+        this.mediaUploader = mediaUploader;
+        this.generatedFileScrubber = generatedFileScrubber;
+        // Feishu WebSocket reconnect: 2s→4s→8s→16s→30s, infinite retry
         this.backoff = new ExponentialBackoff(2000, 30000, 2.0, -1);
     }
 
@@ -1626,24 +1647,29 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
             log.warn("[feishu] Channel not started, cannot send message");
             return;
         }
+        if (parts == null || parts.isEmpty()) return;
 
         ensureTokenValid();
+
+        // Carry an explicit channelId for media uploads. Available on
+        // the entity since CRUD; only null in degenerate test stubs.
+        Long channelId = channelEntity != null ? channelEntity.getId() : null;
 
         for (MessageContentPart part : parts) {
             if (part == null) continue;
             try {
                 switch (part.getType()) {
-                    case "text" -> sendMessage(targetId, part.getText() != null ? part.getText() : "");
-                    case "image" -> {
-                        if (part.getMediaId() != null) {
-                            sendFeishuMedia(targetId, "image", Map.of("image_key", part.getMediaId()));
+                    case "text" -> handleTextPart(targetId, channelId, part);
+                    case "refusal" -> {
+                        String refusal = part.getText();
+                        if (refusal != null && !refusal.isBlank()) {
+                            sendMessage(targetId, "⚠️ " + refusal);
                         }
                     }
-                    case "file" -> {
-                        if (part.getMediaId() != null) {
-                            sendFeishuMedia(targetId, "file", Map.of("file_key", part.getMediaId()));
-                        }
-                    }
+                    case "image" -> handleMediaPart(targetId, channelId, part, "image", "image.jpg");
+                    case "file" -> handleMediaPart(targetId, channelId, part, "file", "file.bin");
+                    case "audio" -> handleMediaPart(targetId, channelId, part, "audio", "voice_reply.opus");
+                    case "video" -> handleMediaPart(targetId, channelId, part, "video", "video.mp4");
                     default -> {
                         if (part.getText() != null) sendMessage(targetId, part.getText());
                     }
@@ -1652,6 +1678,121 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
                 log.error("[feishu] Failed to send content part ({}): {}", part.getType(), e.getMessage());
             }
         }
+    }
+
+    /**
+     * Handle one text part: if the scrubber is wired, rewrite any
+     * {@code /api/v1/files/generated/{id}} URL to a {@code "📎 filename"}
+     * marker and upload the cached bytes as a native attachment; if not,
+     * fall back to sending the text as-is (legacy behavior).
+     */
+    private void handleTextPart(String targetId, Long channelId, MessageContentPart part) {
+        String text = part.getText() != null ? part.getText() : "";
+        if (generatedFileScrubber == null || mediaUploader == null || channelId == null) {
+            sendMessage(targetId, text);
+            return;
+        }
+        GeneratedFileScrubber.ScrubResult scrubbed = generatedFileScrubber.scrub(text);
+        sendMessage(targetId, scrubbed.rewrittenText());
+        for (GeneratedFileScrubber.AttachmentHit hit : scrubbed.attachments()) {
+            uploadAndSendAttachment(targetId, channelId,
+                    new MediaSource.Bytes(hit.bytes()),
+                    hit.fileName(),
+                    hit.mediaType(),
+                    hit.mimeType(),
+                    null);
+        }
+    }
+
+    /**
+     * Handle one image / file / audio / video part. If {@code mediaId} is
+     * already a Feishu key (image_key / file_key) — e.g. echoed back
+     * from an earlier inbound message — send directly. Otherwise build a
+     * {@link MediaSource} from {@code path} / {@code fileUrl} /
+     * {@code text}(base64 not yet supported here) and upload via the SDK
+     * uploader first.
+     */
+    private void handleMediaPart(String targetId, Long channelId, MessageContentPart part,
+                                 String mediaType, String defaultFileName) {
+        // 1. mediaId is already a Feishu key → send straight away
+        String existingKey = part.getMediaId();
+        if (existingKey != null && (existingKey.startsWith("img_") || existingKey.startsWith("file_"))) {
+            String keyField = "image".equals(mediaType) ? "image_key" : "file_key";
+            sendFeishuMedia(targetId, mediaType, Map.of(keyField, existingKey));
+            return;
+        }
+        if (mediaUploader == null || channelId == null) {
+            sendFallbackText(targetId, part, mediaType);
+            return;
+        }
+        MediaSource source = resolveSource(part);
+        if (source == null) {
+            sendFallbackText(targetId, part, mediaType);
+            return;
+        }
+        String fileName = part.getFileName() != null ? part.getFileName() : defaultFileName;
+        uploadAndSendAttachment(targetId, channelId, source, fileName,
+                mediaType, part.getContentType(), null);
+    }
+
+    /**
+     * Resolve a {@link MessageContentPart}'s payload source — prefer
+     * already-on-disk path, fall back to fileUrl. Returns {@code null}
+     * when neither is usable (e.g. the part only carries a placeholder).
+     */
+    private static MediaSource resolveSource(MessageContentPart part) {
+        if (part.getPath() != null && !part.getPath().isBlank()) {
+            java.nio.file.Path p = java.nio.file.Path.of(part.getPath());
+            if (java.nio.file.Files.exists(p)) {
+                return new MediaSource.LocalPath(p);
+            }
+        }
+        String url = part.getFileUrl();
+        if (url != null && !url.isBlank()) {
+            return new MediaSource.RemoteUrl(url);
+        }
+        return null;
+    }
+
+    /**
+     * Upload via the SDK-backed uploader and dispatch the resulting
+     * key as a Feishu media message. Surfaces any rejection /
+     * downgrade note as a follow-up text bubble so users understand
+     * why a bubble isn't native.
+     */
+    private void uploadAndSendAttachment(String targetId, Long channelId,
+                                          MediaSource source, String fileName,
+                                          String mediaType, String contentType,
+                                          Integer durationMillis) {
+        try {
+            MediaUploadResult result = mediaUploader.upload(new MediaUploadRequest(
+                    channelId, source, fileName, mediaType, contentType, durationMillis));
+            String finalType = result.finalMediaType();
+            String keyField = "image".equals(finalType) ? "image_key" : "file_key";
+            sendFeishuMedia(targetId, finalType, Map.of(keyField, result.mediaId()));
+            if (result.downgradeNote() != null) {
+                sendMessage(targetId, "ℹ️ " + result.downgradeNote());
+            }
+        } catch (MediaUploadException e) {
+            log.warn("[feishu] Upload rejected for {} ({}): {}", fileName, mediaType, e.getMessage());
+            sendMessage(targetId, "⚠️ " + e.getMessage());
+        } catch (Exception e) {
+            log.error("[feishu] Upload failed for {} ({}): {}", fileName, mediaType, e.getMessage(), e);
+            sendMessage(targetId, "⚠️ 附件 " + fileName + " 发送失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * Last-ditch text representation when neither a Feishu key nor a
+     * usable source could be derived from the part. Keeps the bubble
+     * informative instead of swallowing the message.
+     */
+    private void sendFallbackText(String targetId, MessageContentPart part, String mediaType) {
+        StringBuilder sb = new StringBuilder("⚠️ 无法发送 ");
+        sb.append(mediaType);
+        if (part.getFileName() != null) sb.append("：").append(part.getFileName());
+        if (part.getFileUrl() != null) sb.append(" (").append(part.getFileUrl()).append(")");
+        sendMessage(targetId, sb.toString());
     }
 
     private void sendFeishuMedia(String targetId, String msgType, Map<String, Object> content) {
