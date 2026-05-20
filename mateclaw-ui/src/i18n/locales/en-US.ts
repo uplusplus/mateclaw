@@ -2980,6 +2980,18 @@ export default {
       denied: 'Authorization was denied',
       startFailed: 'Failed to fetch QR code, please check your network',
     },
+    qqRegister: {
+      title: 'Scan to Bind QQ Bot',
+      hint: 'You must have already created a bot on q.qq.com. Click the button, scan with mobile QQ, and pick the bot to bind — its AppID / AppSecret will be auto-filled below without manual copy-paste.',
+      button: 'Scan to Bind Existing Bot',
+      buttonLoading: 'Preparing QR code…',
+      qrcodeLoading: 'Generating QR code',
+      scanHint: 'Scan the QR code above with mobile QQ and pick a bot on the page',
+      confirmed: 'Bound. AppID and AppSecret have been auto-filled.',
+      expired: 'QR code expired, please try again',
+      denied: 'Binding failed or was cancelled',
+      startFailed: 'Failed to fetch QR code, please check your network',
+    },
     feishuRegister: {
       title: 'One-click Feishu App Creation',
       hint: 'Click the button to get a QR code. Scan it with Feishu and confirm authorization — an in-house app will be created in your tenant and the App ID / App Secret will be auto-filled below.',

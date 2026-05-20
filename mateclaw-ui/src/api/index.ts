@@ -463,6 +463,11 @@ export const channelApi = {
     http.post('/channels/webhook/dingtalk/register/begin'),
   dingtalkRegisterStatus: (sessionId: string) =>
     http.get(`/channels/webhook/dingtalk/register/status?session=${encodeURIComponent(sessionId)}`),
+  // QQ Bot scan-to-bind (Lite portal). Uses the unified channel QR auth endpoint.
+  qqRegisterBegin: () =>
+    http.post('/channels/qrcode/qq/begin'),
+  qqRegisterStatus: (sessionId: string) =>
+    http.get(`/channels/qrcode/qq/status?session=${encodeURIComponent(sessionId)}`),
 }
 
 // ==================== MCP Server ====================

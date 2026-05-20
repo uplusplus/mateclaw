@@ -3080,6 +3080,18 @@ export default {
       denied: '授权被拒绝',
       startFailed: '获取二维码失败，请检查网络',
     },
+    qqRegister: {
+      title: '扫码绑定 QQ 机器人',
+      hint: '需要先在 QQ 开放平台 (q.qq.com) 创建好机器人。点击按钮后用手机 QQ 扫码，在弹出页面选择要绑定的机器人，AppID / AppSecret 会自动填入下方，无需手动复制。',
+      button: '扫码绑定已有机器人',
+      buttonLoading: '正在准备二维码…',
+      qrcodeLoading: '正在生成二维码',
+      scanHint: '请使用手机 QQ 扫描上方二维码并在页面中选择机器人',
+      confirmed: '绑定成功，AppID 和 AppSecret 已自动填入',
+      expired: '二维码已过期，请重新生成',
+      denied: '绑定失败或被取消',
+      startFailed: '获取二维码失败，请检查网络',
+    },
     feishuRegister: {
       title: '一键创建飞书应用',
       hint: '点击按钮获取二维码，使用飞书扫一扫并确认授权后，会自动在你的企业里创建自建应用，App ID / App Secret 自动填入下方。',
