@@ -846,6 +846,21 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter implements Stre
     // ==================== 消息反应 ====================
 
     /**
+     * Acknowledge a successful agent reply by reacting to the inbound
+     * message with a "DONE" (✅) emoji. Gated by {@code enable_done_reaction}
+     * (default true) — operators that prefer a quiet UI can disable it
+     * without losing the existing inbound "THUMBSUP" ack.
+     */
+    @Override
+    public void onAgentCompleted(ChannelMessage inboundMessage) {
+        if (inboundMessage == null) return;
+        String messageId = inboundMessage.getMessageId();
+        if (messageId == null || messageId.isBlank()) return;
+        if (!getConfigBoolean("enable_done_reaction", true)) return;
+        addReactionAsync(messageId, "DONE");
+    }
+
+    /**
      * 非阻塞地给消息添加表情反应
      * 在新线程中执行，失败只 log.debug 不影响主流程
      */

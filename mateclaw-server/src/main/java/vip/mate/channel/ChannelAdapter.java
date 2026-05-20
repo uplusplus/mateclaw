@@ -257,4 +257,24 @@ public interface ChannelAdapter {
                 ? ChannelHealth.up(getChannelType(), null, java.time.Instant.now())
                 : ChannelHealth.outOfService(getChannelType(), null);
     }
+
+    // ==================== Lifecycle hooks ====================
+
+    /**
+     * Fires after the router has successfully delivered the agent's reply
+     * for the given inbound message. Channels that want to acknowledge
+     * completion (e.g. Feishu adds a ✅ reaction on the user's original
+     * message) override this; the default is a no-op so the router can
+     * call it unconditionally without checking adapter type.
+     *
+     * <p>Called only on the happy path — error replies, approval-pending
+     * branches, and stream exceptions skip this hook.
+     *
+     * <p>Implementations MUST be cheap and non-blocking; they run on the
+     * router's processing thread. Use a background thread for any
+     * platform API call.
+     */
+    default void onAgentCompleted(ChannelMessage inboundMessage) {
+        // no-op; opt-in per adapter
+    }
 }

@@ -696,6 +696,15 @@ public class ChannelMessageRouter {
 
                         // 语音回复：异步 TTS 合成并追加发送（先文本后语音，不阻塞）
                         maybeGenerateVoiceReply(message, adapter, replyTarget, conversationId, reply, channelEntity);
+
+                        // Per-channel completion ack (e.g. Feishu ✅ reaction).
+                        // No-op for adapters that haven't overridden the hook.
+                        try {
+                            adapter.onAgentCompleted(message);
+                        } catch (Exception hookErr) {
+                            log.debug("[{}] onAgentCompleted hook failed (non-fatal): {}",
+                                    adapter.getChannelType(), hookErr.getMessage());
+                        }
                     }
                 }
             } finally {
@@ -812,6 +821,12 @@ public class ChannelMessageRouter {
                 if (replyTarget != null) {
                     maybeGenerateVoiceReply(message, streamingAdapter, replyTarget,
                             conversationId, finalContent, channelEntity);
+                }
+                try {
+                    streamingAdapter.onAgentCompleted(message);
+                } catch (Exception hookErr) {
+                    log.debug("[{}] onAgentCompleted hook failed (non-fatal): {}",
+                            channelType, hookErr.getMessage());
                 }
                 return saved != null ? saved.getId() : null;
             }
