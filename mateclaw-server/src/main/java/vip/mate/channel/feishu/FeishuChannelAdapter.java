@@ -1411,12 +1411,15 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
 
         FeishuCardFormatter.ContentFormat fmt = FeishuCardFormatter.detect(content);
 
-        if ("always".equals(cardFormat) || fmt != FeishuCardFormatter.ContentFormat.PLAIN_TEXT) {
-            sendCard(targetId, FeishuCardFormatter.render(content, fmt));
-        } else {
-            splitTextForFeishu(content, MAX_TEXT_MESSAGE_CHARS)
-                    .forEach(c -> sendOneTextChunk(targetId, c));
+        boolean preferCard = "always".equals(cardFormat) || fmt != FeishuCardFormatter.ContentFormat.PLAIN_TEXT;
+        if (preferCard) {
+            boolean sent = sendCard(targetId, FeishuCardFormatter.render(content, fmt));
+            if (sent) return;
+            // Card path bailed (oversized payload, null guard, or network error) —
+            // fall through to text so the user doesn't get nothing.
         }
+        splitTextForFeishu(content, MAX_TEXT_MESSAGE_CHARS)
+                .forEach(c -> sendOneTextChunk(targetId, c));
     }
 
     private void sendOneTextChunk(String targetId, String content) {
@@ -1447,19 +1450,45 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
         }
     }
 
-    public void sendCard(String targetId, Map<String, Object> cardJson) {
+    /**
+     * Feishu rejects interactive messages whose {@code content} payload exceeds
+     * roughly 30 KB once stringified. We compare the serialized card against a
+     * slightly tighter ceiling and fall back to plain text rather than letting
+     * the request error out at the API.
+     */
+    static final int MAX_CARD_CONTENT_BYTES = 30_000;
+
+    /**
+     * Posts an Interactive Card. Returns {@code true} when the card was sent
+     * (HTTP 2xx), {@code false} when a pre-flight check rejected the call
+     * (null inputs, channel stopped, payload oversized) or the HTTP request
+     * itself failed — letting {@link #sendMessage(String, String)} fall back
+     * to plain text instead of going silent.
+     */
+    public boolean sendCard(String targetId, Map<String, Object> cardJson) {
         if (httpClient == null) {
             log.warn("[feishu] Channel not started, cannot send card");
-            return;
+            return false;
+        }
+        if (targetId == null || cardJson == null) {
+            log.warn("[feishu] sendCard called with null target or card");
+            return false;
         }
         ensureTokenValid();
         String apiBase = getApiBaseUrl();
         String receiveIdType = targetId.startsWith("ou_") ? "open_id" : "chat_id";
         try {
+            String cardContent = objectMapper.writeValueAsString(cardJson);
+            int cardBytes = cardContent.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+            if (cardBytes > MAX_CARD_CONTENT_BYTES) {
+                log.warn("[feishu] Card content {} bytes exceeds {} byte limit, falling back to text",
+                        cardBytes, MAX_CARD_CONTENT_BYTES);
+                return false;
+            }
             String jsonBody = objectMapper.writeValueAsString(Map.of(
                     "receive_id", targetId,
                     "msg_type", "interactive",
-                    "content", objectMapper.writeValueAsString(cardJson)
+                    "content", cardContent
             ));
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(apiBase + "/open-apis/im/v1/messages?receive_id_type=" + receiveIdType))
@@ -1470,17 +1499,23 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
                 log.warn("[feishu] Send card failed: status={}, body={}", response.statusCode(), response.body());
-            } else {
-                log.debug("[feishu] Card sent to {} (type={})", targetId, receiveIdType);
+                return false;
             }
+            log.debug("[feishu] Card sent to {} (type={})", targetId, receiveIdType);
+            return true;
         } catch (Exception e) {
             log.error("[feishu] Failed to send card: {}", e.getMessage(), e);
+            return false;
         }
     }
 
     public void updateCard(String messageId, Map<String, Object> cardJson) {
         if (httpClient == null) {
             log.warn("[feishu] Channel not started, cannot update card");
+            return;
+        }
+        if (messageId == null || cardJson == null) {
+            log.warn("[feishu] updateCard called with null messageId or card");
             return;
         }
         ensureTokenValid();
