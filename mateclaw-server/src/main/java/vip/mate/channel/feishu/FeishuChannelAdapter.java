@@ -99,8 +99,22 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
     /** 旧事件过滤默认阈值（秒）：超过 30 秒的事件视为重连后回放 */
     private static final long DEFAULT_STALE_THRESHOLD_SECONDS = 30L;
 
-    /** 机器人自身 open_id 缓存（用于 require_mention 精确判断，懒加载） */
+    /** Bot's own open_id, fetched once from /open-apis/bot/v3/info and cached. */
     private volatile String botOpenId;
+
+    /** Serializes lazy bot-open-id fetches so concurrent group messages share one API roundtrip. */
+    private final Object botOpenIdLock = new Object();
+
+    /**
+     * Last failure timestamp for {@code /open-apis/bot/v3/info}. While the call is in the
+     * {@link #BOT_OPENID_FAILURE_BACKOFF_MS} negative-cache window, {@link #getBotOpenId()}
+     * returns {@code null} fast so a Feishu outage doesn't trigger one synchronous retry
+     * per inbound group message.
+     */
+    private volatile long botOpenIdLastFailureMs = 0L;
+
+    /** Negative-cache window for {@link #getBotOpenId()} failures (60 s). */
+    private static final long BOT_OPENID_FAILURE_BACKOFF_MS = 60_000L;
 
     public FeishuChannelAdapter(ChannelEntity channelEntity,
                                 ChannelMessageRouter messageRouter,
@@ -131,6 +145,12 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
 
         // 定时刷新 Token：过期前 5 分钟自动刷新
         scheduleTokenRefresh();
+
+        // Prefetch the bot's own open_id once the token is valid so the first
+        // require_mention check on the WebSocket dispatch thread doesn't pay
+        // the 5 s API latency. Failure is non-fatal — getBotOpenId() handles
+        // it and the negative cache keeps subsequent retries cheap.
+        getBotOpenId();
 
         String connectionMode = getConfigString("connection_mode", "websocket");
         if ("websocket".equals(connectionMode)) {
@@ -166,6 +186,8 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
 
         this.httpClient = null;
         this.tenantAccessToken = null;
+        this.botOpenId = null;
+        this.botOpenIdLastFailureMs = 0L;
         this.processedMessageIds.clear();
         this.nicknameCache.clear();
         this.quotedMessageCache.clear();
@@ -188,6 +210,10 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
         } catch (Exception e) {
             log.warn("[feishu] Token refresh during reconnect failed: {}", e.getMessage());
         }
+
+        // Re-prefetch bot open_id after reconnect: same dispatch-thread latency
+        // concern as doStart, plus picks up a rotated app identity if any.
+        getBotOpenId();
 
         if ("websocket".equals(connectionMode)) {
             log.info("[feishu] Reconnecting WebSocket...");
@@ -459,33 +485,59 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
     }
 
     /**
-     * Fetches the bot's own open_id once and caches it. Returns {@code null} when
-     * the fetch fails — callers that consult this value (currently the
-     * {@code require_mention} gate) must treat {@code null} as "identity unknown"
+     * Fetches the bot's own open_id once and caches it. Returns {@code null}
+     * when the identity is unavailable; callers (currently the
+     * {@code require_mention} gate) treat {@code null} as "identity unknown"
      * and fall open so a transient API outage doesn't silence the bot.
+     *
+     * <p>Concurrent callers share a single API roundtrip via
+     * {@link #botOpenIdLock}. On failure, {@link #botOpenIdLastFailureMs} is
+     * stamped so callers within the next {@link #BOT_OPENID_FAILURE_BACKOFF_MS}
+     * ms return {@code null} immediately instead of triggering a fresh 5 s
+     * synchronous fetch per inbound message.
      */
     private String getBotOpenId() {
-        if (botOpenId != null) return botOpenId;
-        try {
-            ensureTokenValid();
-            String apiBase = getApiBaseUrl();
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(apiBase + "/open-apis/bot/v3/info"))
-                    .header("Authorization", "Bearer " + tenantAccessToken)
-                    .GET()
-                    .timeout(Duration.ofSeconds(5))
-                    .build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            Map<?, ?> body = objectMapper.readValue(response.body(), Map.class);
-            Map<?, ?> bot = (Map<?, ?>) body.get("bot");
-            if (bot != null) {
-                botOpenId = (String) bot.get("open_id");
-                log.info("[feishu] Bot open_id fetched and cached: {}", botOpenId);
+        String cached = botOpenId;
+        if (cached != null) return cached;
+        if (withinFailureBackoff()) return null;
+        synchronized (botOpenIdLock) {
+            // Re-check under the lock — another thread may have populated the
+            // cache or stamped a fresh failure while we were waiting.
+            if (botOpenId != null) return botOpenId;
+            if (withinFailureBackoff()) return null;
+            try {
+                ensureTokenValid();
+                String apiBase = getApiBaseUrl();
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(apiBase + "/open-apis/bot/v3/info"))
+                        .header("Authorization", "Bearer " + tenantAccessToken)
+                        .GET()
+                        .timeout(Duration.ofSeconds(5))
+                        .build();
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                Map<?, ?> body = objectMapper.readValue(response.body(), Map.class);
+                Map<?, ?> bot = (Map<?, ?>) body.get("bot");
+                if (bot != null && bot.get("open_id") instanceof String openId && !openId.isBlank()) {
+                    botOpenId = openId;
+                    log.info("[feishu] Bot open_id fetched and cached: {}", openId);
+                    return openId;
+                }
+                // 2xx with no bot.open_id field → treat as transient failure.
+                botOpenIdLastFailureMs = System.currentTimeMillis();
+                log.warn("[feishu] /open-apis/bot/v3/info returned no bot.open_id; require_mention gate falls open for {}s",
+                        BOT_OPENID_FAILURE_BACKOFF_MS / 1000);
+            } catch (Exception e) {
+                botOpenIdLastFailureMs = System.currentTimeMillis();
+                log.warn("[feishu] Failed to fetch bot open_id (require_mention gate falls open for {}s): {}",
+                        BOT_OPENID_FAILURE_BACKOFF_MS / 1000, e.getMessage());
             }
-        } catch (Exception e) {
-            log.warn("[feishu] Failed to fetch bot open_id; require_mention gate will fall open until next attempt: {}", e.getMessage());
+            return null;
         }
-        return botOpenId;
+    }
+
+    private boolean withinFailureBackoff() {
+        long last = botOpenIdLastFailureMs;
+        return last != 0L && System.currentTimeMillis() - last < BOT_OPENID_FAILURE_BACKOFF_MS;
     }
 
     // ==================== Token 管理 ====================
