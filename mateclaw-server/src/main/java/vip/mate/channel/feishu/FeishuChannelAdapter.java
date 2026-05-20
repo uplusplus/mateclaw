@@ -54,6 +54,7 @@ import java.util.concurrent.TimeUnit;
  * - stale_event_threshold_seconds: 过滤旧事件阈值（默认 30，0 禁用）
  * - card_format: 卡片格式化模式 "auto"（默认）| "always" | "never"
  *               auto: 根据内容自动检测；always: 全部包卡片；never: 全部纯文本（降级/调试用）
+ * - card_header: Markdown 卡片 header 文案，默认 "AI 助手"；设为空串可隐藏 header
  * - require_mention: 群聊中是否需要 @机器人 才响应（默认 false）
  *               true: 仅当消息中 @了机器人才处理；通过飞书 mentions 字段精确判断，无需配置 botPrefix
  *
@@ -1413,7 +1414,8 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
 
         boolean preferCard = "always".equals(cardFormat) || fmt != FeishuCardFormatter.ContentFormat.PLAIN_TEXT;
         if (preferCard) {
-            boolean sent = sendCard(targetId, FeishuCardFormatter.render(content, fmt));
+            String cardHeader = getConfigString("card_header", FeishuCardFormatter.DEFAULT_MARKDOWN_HEADER);
+            boolean sent = sendCard(targetId, FeishuCardFormatter.render(content, fmt, cardHeader));
             if (sent) return;
             // Card path bailed (oversized payload, null guard, or network error) —
             // fall through to text so the user doesn't get nothing.
