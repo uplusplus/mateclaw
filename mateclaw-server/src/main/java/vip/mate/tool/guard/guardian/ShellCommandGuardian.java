@@ -79,7 +79,8 @@ public class ShellCommandGuardian implements ToolGuardGuardian {
                             context.toolName(),
                             rule.getParamName() != null ? rule.getParamName() : "command",
                             rule.getPattern(),
-                            snippet
+                            snippet,
+                            parseDecision(rule.getDecision())
                     ));
                 }
             }
@@ -113,6 +114,15 @@ public class ShellCommandGuardian implements ToolGuardGuardian {
         String raw = context.rawArguments();
         if (raw == null || raw.isEmpty()) return null;
         return (context.toolName() != null ? context.toolName() + " " : "") + raw;
+    }
+
+    private GuardDecision parseDecision(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return GuardDecision.valueOf(raw);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 
     private String extractSnippet(String input, int matchStart, int contextLen) {

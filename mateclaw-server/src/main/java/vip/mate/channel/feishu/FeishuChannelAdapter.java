@@ -5,10 +5,13 @@ import com.lark.oapi.event.EventDispatcher;
 import com.lark.oapi.service.im.ImService;
 import com.lark.oapi.service.im.v1.model.P2MessageReceiveV1;
 import lombok.extern.slf4j.Slf4j;
+import reactor.core.publisher.Flux;
+import vip.mate.agent.AgentService.StreamDelta;
 import vip.mate.channel.AbstractChannelAdapter;
 import vip.mate.channel.ChannelMessage;
 import vip.mate.channel.ChannelMessageRouter;
 import vip.mate.channel.ExponentialBackoff;
+import vip.mate.channel.StreamingChannelAdapter;
 import vip.mate.channel.media.GeneratedFileScrubber;
 import vip.mate.channel.media.MediaSource;
 import vip.mate.channel.media.MediaUploadException;
@@ -66,7 +69,7 @@ import java.util.concurrent.TimeUnit;
  * @author MateClaw Team
  */
 @Slf4j
-public class FeishuChannelAdapter extends AbstractChannelAdapter {
+public class FeishuChannelAdapter extends AbstractChannelAdapter implements StreamingChannelAdapter {
 
     public static final String CHANNEL_TYPE = "feishu";
 
@@ -128,10 +131,13 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
     /** Scrubs {@code /api/v1/files/generated/{id}} URLs into native attachments. Nullable for legacy callers. */
     private final GeneratedFileScrubber generatedFileScrubber;
 
+    /** CardKit streaming-card manager. Nullable for legacy callers / tests. */
+    private final FeishuStreamingCardManager streamingCardManager;
+
     public FeishuChannelAdapter(ChannelEntity channelEntity,
                                 ChannelMessageRouter messageRouter,
                                 ObjectMapper objectMapper) {
-        this(channelEntity, messageRouter, objectMapper, null, null);
+        this(channelEntity, messageRouter, objectMapper, null, null, null);
     }
 
     public FeishuChannelAdapter(ChannelEntity channelEntity,
@@ -139,9 +145,19 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
                                 ObjectMapper objectMapper,
                                 FeishuMediaUploader mediaUploader,
                                 GeneratedFileScrubber generatedFileScrubber) {
+        this(channelEntity, messageRouter, objectMapper, mediaUploader, generatedFileScrubber, null);
+    }
+
+    public FeishuChannelAdapter(ChannelEntity channelEntity,
+                                ChannelMessageRouter messageRouter,
+                                ObjectMapper objectMapper,
+                                FeishuMediaUploader mediaUploader,
+                                GeneratedFileScrubber generatedFileScrubber,
+                                FeishuStreamingCardManager streamingCardManager) {
         super(channelEntity, messageRouter, objectMapper);
         this.mediaUploader = mediaUploader;
         this.generatedFileScrubber = generatedFileScrubber;
+        this.streamingCardManager = streamingCardManager;
         // Feishu WebSocket reconnect: 2s→4s→8s→16s→30s, infinite retry
         this.backoff = new ExponentialBackoff(2000, 30000, 2.0, -1);
     }
@@ -1436,6 +1452,136 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter {
      * of one wall of text. Split at paragraph / line boundaries when possible.
      */
     static final int MAX_TEXT_MESSAGE_CHARS = 4000;
+
+    // ==================== StreamingChannelAdapter ====================
+
+    /**
+     * Stream consumption strategy:
+     * <ul>
+     *   <li>{@code card_streaming_enabled=true} (default) + manager wired →
+     *       create a {@code cardkit/v1} streaming card, throttle-update its
+     *       markdown element on every delta, finalise on completion. The
+     *       receiver sees text appearing character-by-character like a
+     *       chat-app's typing animation.</li>
+     *   <li>Manager missing OR card creation fails OR config opts out →
+     *       fall back to {@link #processStreamAsText}: accumulate every
+     *       chunk and send one final regular message.</li>
+     * </ul>
+     */
+    @Override
+    public String processStream(Flux<StreamDelta> stream, ChannelMessage message, String conversationId) {
+        if (!isCardStreamingEnabled() || streamingCardManager == null
+                || channelEntity == null) {
+            return processStreamAsText(stream, message);
+        }
+
+        String receiveId = pickReceiveId(message);
+        if (receiveId == null) {
+            log.warn("[feishu-stream] No usable receive id on message; falling back to text mode");
+            return processStreamAsText(stream, message);
+        }
+        String receiveIdType = resolveReceiveIdType(receiveId);
+
+        String sessionKey = streamingCardManager.createAndDeliver(
+                channelEntity.getId(), receiveIdType, receiveId, null);
+        if (sessionKey == null) {
+            log.info("[feishu-stream] Card create/deliver failed; falling back to text mode");
+            return processStreamAsText(stream, message);
+        }
+
+        StringBuilder accumulator = new StringBuilder();
+        try {
+            stream.doOnNext(delta -> {
+                        if (delta.content() != null) {
+                            accumulator.append(delta.content());
+                            streamingCardManager.appendContent(sessionKey, delta.content(), false);
+                        }
+                    })
+                    .doOnError(err -> {
+                        log.error("[feishu-stream] stream error: sessionKey={}, err={}",
+                                sessionKey, err.getMessage());
+                        streamingCardManager.failCard(sessionKey, err.getMessage());
+                    })
+                    .blockLast(Duration.ofMinutes(5));
+
+            String finalContent = accumulator.toString();
+            if (finalContent.isBlank()) {
+                finalContent = "（无回复内容）";
+            }
+            streamingCardManager.finishCard(sessionKey, finalContent);
+            log.info("[feishu-stream] Card streaming completed: sessionKey={}, contentLen={}",
+                    sessionKey, finalContent.length());
+            return finalContent;
+
+        } catch (Exception e) {
+            log.error("[feishu-stream] Card streaming failed: sessionKey={}, err={}",
+                    sessionKey, e.getMessage(), e);
+            streamingCardManager.failCard(sessionKey, e.getMessage());
+
+            // Tag returned content with the "[错误] " prefix so
+            // ChannelMessageRouter.isErrorReply flips status='error' on the
+            // persisted row and BaseAgent.sanitizeForLlm filters it out of
+            // the next turn's history. Without this, partial streaming
+            // output (e.g. LLM 400'd mid-stream) would re-enter the prompt
+            // as a valid assistant turn and re-trigger the same 400.
+            String partial = accumulator.toString();
+            String errorPrefix = "[错误] Feishu CardKit streaming failed: " + e.getMessage();
+            if (!partial.isBlank()) {
+                return errorPrefix + "\n\n（已生成的部分内容，已忽略）\n" + partial;
+            }
+            throw new RuntimeException(errorPrefix, e);
+        }
+    }
+
+    /**
+     * Streaming fallback — accumulate all deltas, then send through the
+     * existing {@link #sendMessage} path so the message goes out as a
+     * regular text bubble (auto-upgraded to a non-streaming card by the
+     * existing {@code card_format} logic when content looks card-worthy).
+     */
+    private String processStreamAsText(Flux<StreamDelta> stream, ChannelMessage message) {
+        StringBuilder accumulator = new StringBuilder();
+        stream.doOnNext(delta -> {
+                    if (delta.content() != null) {
+                        accumulator.append(delta.content());
+                    }
+                })
+                .blockLast(Duration.ofMinutes(5));
+        String finalContent = accumulator.toString();
+        if (!finalContent.isBlank()) {
+            String replyTarget = message.getReplyToken() != null
+                    ? message.getReplyToken()
+                    : (message.getChatId() != null ? message.getChatId() : message.getSenderId());
+            if (replyTarget != null) {
+                sendMessage(replyTarget, finalContent);
+            }
+        }
+        return finalContent;
+    }
+
+    /** Resolve the best id to receive a streaming card — prefer reply token, then chat, then sender. */
+    private static String pickReceiveId(ChannelMessage message) {
+        if (message == null) return null;
+        if (message.getReplyToken() != null && !message.getReplyToken().isBlank()) {
+            return message.getReplyToken();
+        }
+        if (message.getChatId() != null && !message.getChatId().isBlank()) {
+            return message.getChatId();
+        }
+        if (message.getSenderId() != null && !message.getSenderId().isBlank()) {
+            return message.getSenderId();
+        }
+        return null;
+    }
+
+    private boolean isCardStreamingEnabled() {
+        // Default true — streaming cards are the better UX when CardKit is
+        // available. Operators can flip card_streaming_enabled=false in
+        // configJson to fall back to the text path (useful for debugging
+        // or when targeting an old Feishu tenant that hasn't rolled out
+        // CardKit v1 universally).
+        return getConfigBoolean("card_streaming_enabled", true);
+    }
 
     @Override
     public void sendMessage(String targetId, String content) {

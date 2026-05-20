@@ -33,6 +33,7 @@ class FeishuMediaWiringIT {
     @Autowired private FeishuMediaUploader mediaUploader;
     @Autowired private FeishuSizePolicy sizePolicy;
     @Autowired private GeneratedFileScrubber scrubber;
+    @Autowired private FeishuStreamingCardManager streamingCardManager;
     @Autowired private List<MediaUploader> uploaderBeans;
     @Autowired private List<MediaSizePolicy> policyBeans;
 
@@ -43,6 +44,7 @@ class FeishuMediaWiringIT {
         assertNotNull(mediaUploader);
         assertNotNull(sizePolicy);
         assertNotNull(scrubber);
+        assertNotNull(streamingCardManager);
     }
 
     @Test
