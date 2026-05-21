@@ -130,18 +130,44 @@ public class ReadFileTool {
             // 提取指定范围的行（转为 0-based）
             List<String> selectedLines = allLines.subList(start - 1, end);
 
-            // 截断控制
+            // Truncation control. Each output line carries a "%6d\t" prefix and a
+            // trailing newline, so the budget available for the line's own text is
+            // the remaining byte budget minus that overhead.
             StringBuilder sb = new StringBuilder();
             int linesRead = 0;
             boolean truncated = false;
-            int maxLines = Math.min(selectedLines.size(), DEFAULT_MAX_LINES);
+            boolean lineTruncated = false;
+            int truncatedLineNum = 0;
 
             for (int i = 0; i < selectedLines.size(); i++) {
                 String line = selectedLines.get(i);
                 int lineNum = start + i;
 
+                if (linesRead >= DEFAULT_MAX_LINES) {
+                    truncated = true;
+                    break;
+                }
+
                 String numberedLine = String.format("%6d\t%s\n", lineNum, line);
-                if (sb.length() + numberedLine.length() > MAX_OUTPUT_BYTES || linesRead >= DEFAULT_MAX_LINES) {
+                if (sb.length() + numberedLine.length() > MAX_OUTPUT_BYTES) {
+                    // This line does not fit in the remaining budget. Normally we
+                    // stop and let the caller continue from the next line. But when
+                    // a single line is itself larger than the whole budget and we
+                    // have read nothing yet, stopping here would return empty
+                    // content with linesRead=0 — and the suggested continuation
+                    // startLine never advances, producing an infinite retry loop.
+                    // Guarantee progress by emitting as much of this oversized line
+                    // as fits, flagged as truncated, then advancing past it.
+                    if (linesRead == 0) {
+                        String prefix = String.format("%6d\t", lineNum);
+                        String marker = i18n.msg("tool.read_file.line_truncated_marker");
+                        int budget = MAX_OUTPUT_BYTES - prefix.length() - marker.length() - 1; // -1 for '\n'
+                        String clipped = safeTruncate(line, Math.max(0, budget));
+                        sb.append(prefix).append(clipped).append(marker).append('\n');
+                        linesRead++;
+                        lineTruncated = true;
+                        truncatedLineNum = lineNum;
+                    }
                     truncated = true;
                     break;
                 }
@@ -155,10 +181,18 @@ public class ReadFileTool {
             result.set("content", sb.toString());
 
             if (truncated) {
-                int nextStart = start + linesRead;
                 result.set("truncated", true);
-                result.set("message", "输出已截断（最多 " + DEFAULT_MAX_LINES + " 行 / " + (MAX_OUTPUT_BYTES / 1024)
-                        + "KB）。使用 startLine=" + nextStart + " 继续读取。");
+                int kb = MAX_OUTPUT_BYTES / 1024;
+                if (lineTruncated) {
+                    // The oversized line was clipped in place; line ranges cannot
+                    // recover its tail, so do not advertise a startLine that would
+                    // silently skip the remainder.
+                    result.set("lineTruncated", true);
+                    result.set("message", i18n.msg("tool.read_file.line_truncated", truncatedLineNum, kb));
+                } else {
+                    int nextStart = start + linesRead;
+                    result.set("message", i18n.msg("tool.read_file.truncated", DEFAULT_MAX_LINES, kb, nextStart));
+                }
             } else {
                 result.set("truncated", false);
             }
@@ -194,6 +228,22 @@ public class ReadFileTool {
         sb.append("- detect_file_type(filePath=\"").append(fileName).append("\")");
 
         return sb.toString();
+    }
+
+    /**
+     * Truncate a string to at most {@code maxChars} characters without splitting
+     * a UTF-16 surrogate pair. If the cut would land between a high and low
+     * surrogate, drop the dangling high surrogate so the result stays valid.
+     */
+    private static String safeTruncate(String s, int maxChars) {
+        if (s.length() <= maxChars) {
+            return s;
+        }
+        int end = maxChars;
+        if (end > 0 && Character.isHighSurrogate(s.charAt(end - 1))) {
+            end--;
+        }
+        return s.substring(0, end);
     }
 
     /**
