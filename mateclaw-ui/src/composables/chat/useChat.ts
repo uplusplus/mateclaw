@@ -546,12 +546,19 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     // Goal-evaluator breathing halo: when an assistant message finishes
     // and this conversation has an active goal, the backend's evaluation
     // node runs next. Flip the per-conv flag so GoalAvatarRing paints the
-    // breathing halo until `goal_evaluated` resets it. Skip when no goal
-    // is active — the halo should be quiet for ordinary turns.
+    // breathing halo until `goal_evaluated` resets it.
+    //
+    // Skip when:
+    //   - the conversation has no active goal (ordinary turn, no halo)
+    //   - the evaluator already fired in this turn (SSE order under the
+    //     structured stream is goal_evaluated → done → message_complete,
+    //     so re-arming here would leave the halo stuck on after the
+    //     evaluator already cleared it)
     if (
       data.status === 'completed'
       && streamConversationId
       && goalStore.activeGoal(streamConversationId)
+      && !goalStore.recentlyEvaluated(streamConversationId)
     ) {
       goalStore.markEvaluating(streamConversationId, true)
     }

@@ -54,6 +54,19 @@ export const useGoalStore = defineStore('goal', () => {
   // the message's `metadata.fromFollowup` flag (handled by ChatHistory).
   const followupMessageIdsByConv = ref<Record<string, Set<string>>>({})
 
+  // Timestamp (epoch ms) of the most recent terminal evaluator event for
+  // each conversation — used by useChat's message_complete handler to
+  // avoid re-setting the breathing-halo flag on the trailing edge of a
+  // turn whose evaluator already finished. Backend SSE order under the
+  // structured stream is goal_evaluated → done → message_complete, so
+  // without this guard the halo would re-light right after it cleared.
+  const lastTerminalEventAtByConv = ref<Record<string, number>>({})
+  /** Window during which message_complete suppresses re-setting evaluating
+   *  after a goal_evaluated / goal_completed / goal_exhausted just landed.
+   *  4s leaves headroom for SSE jitter without blocking a genuine next
+   *  turn from re-arming the halo. */
+  const TERMINAL_EVENT_SUPPRESSION_MS = 4000
+
   const loading = ref(false)
 
   async function loadActiveForConversation(conversationId: string) {
@@ -156,6 +169,7 @@ export const useGoalStore = defineStore('goal', () => {
     switch (eventType) {
       case 'goal_evaluated': {
         evaluatingByConv.value[conversationId] = false
+        lastTerminalEventAtByConv.value[conversationId] = Date.now()
         if (goal && data?.score != null) {
           goal.completionScore = Number(data.score)
         }
@@ -175,6 +189,7 @@ export const useGoalStore = defineStore('goal', () => {
       }
       case 'goal_completed': {
         evaluatingByConv.value[conversationId] = false
+        lastTerminalEventAtByConv.value[conversationId] = Date.now()
         // Capture the terminal snapshot BEFORE we null out the cache so
         // the GoalSystemLine has a title + score to render.
         recentTerminalByConv.value[conversationId] = {
@@ -192,6 +207,7 @@ export const useGoalStore = defineStore('goal', () => {
       }
       case 'goal_exhausted': {
         evaluatingByConv.value[conversationId] = false
+        lastTerminalEventAtByConv.value[conversationId] = Date.now()
         recentTerminalByConv.value[conversationId] = {
           status: 'exhausted',
           title: goal?.title || '目标',
@@ -226,6 +242,21 @@ export const useGoalStore = defineStore('goal', () => {
 
   function markEvaluating(conversationId: string, flag: boolean) {
     evaluatingByConv.value[conversationId] = flag
+  }
+
+  /**
+   * Returns true if a terminal evaluator event (goal_evaluated,
+   * goal_completed, goal_exhausted) arrived for this conversation
+   * within the suppression window — i.e. the evaluator has already
+   * finished this turn and the halo shouldn't be re-armed.
+   * Callers (useChat's message_complete handler) consult this before
+   * setting evaluating=true so the SSE order goal_evaluated → done →
+   * message_complete doesn't leave a permanently-lit ring.
+   */
+  function recentlyEvaluated(conversationId: string): boolean {
+    const at = lastTerminalEventAtByConv.value[conversationId]
+    if (!at) return false
+    return Date.now() - at < TERMINAL_EVENT_SUPPRESSION_MS
   }
 
   function isEvaluating(conversationId: string): boolean {
@@ -314,6 +345,7 @@ export const useGoalStore = defineStore('goal', () => {
     loadEvents,
     handleSseEvent,
     markEvaluating,
+    recentlyEvaluated,
     isEvaluating,
     activeGoal,
     progressFraction,
