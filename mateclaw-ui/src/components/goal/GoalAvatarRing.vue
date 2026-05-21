@@ -122,6 +122,14 @@ const tooltip = computed(() => {
   pointer-events: none;
   transform: rotate(-90deg);
   transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
+  /* overflow:visible — SVG's default `hidden` would clip the stroke and
+   * the drop-shadow glow at the viewBox edge. */
+  overflow: visible;
+  /* Some upstream rule (couldn't track down — possibly a UA default for
+   * SVG or a global focus-ring style) was applying a 1px box-shadow on
+   * the SVG element itself, rendering as a square outline regardless of
+   * the circle inside. Explicitly clear it here. */
+  box-shadow: none !important;
 }
 /* Hover invites — the ring lifts and brightens, telegraphing "you can
  * inspect me". Stays subtle to keep the steady-state quiet. */
@@ -140,7 +148,7 @@ const tooltip = computed(() => {
  */
 .ring-track {
   stroke: currentColor;
-  stroke-opacity: 0.22;
+  stroke-opacity: 0.45;
   stroke-width: 2;
 }
 
