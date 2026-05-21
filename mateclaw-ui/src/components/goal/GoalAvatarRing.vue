@@ -115,7 +115,13 @@ const tooltip = computed(() => {
 .avatar-with-ring {
   position: relative;
   flex-shrink: 0;
-  display: inline-block;
+  /* inline-flex so the slot content (assistant logo img, 30 px) centers
+   * inside the 34-px wrapper. Plain inline-block left the logo at the
+   * top-left corner while the SVG ring rendered centered on the wrapper
+   * — visually the logo looked offset toward upper-left of the ring. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .avatar-with-ring .ring {
   position: absolute;
