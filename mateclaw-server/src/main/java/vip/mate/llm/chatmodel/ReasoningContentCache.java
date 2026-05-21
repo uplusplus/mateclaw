@@ -1,9 +1,6 @@
 package vip.mate.llm.chatmodel;
 
-import lombok.extern.slf4j.Slf4j;
-
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -34,7 +31,6 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * @author MateClaw Team
  */
-@Slf4j
 public final class ReasoningContentCache {
 
     private static final long DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000L; // 24 hours
