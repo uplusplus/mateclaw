@@ -52,7 +52,15 @@ import java.util.List;
 @Service
 public class GoalEvaluationService {
 
-    private static final int MAX_OUTPUT_TOKENS = 400;
+    /**
+     * Token budget for the evaluator response. Reasoning-mode models
+     * (DeepSeek V4 Pro, Kimi for Coding, GLM-Z1, …) consume a chunk of
+     * this budget on internal {@code <think>} content before emitting
+     * the JSON answer; 400 was empirically too tight and produced
+     * empty responses on every reasoning provider. 2000 leaves comfort
+     * for ~1500 tokens of reasoning + the small JSON object we need.
+     */
+    private static final int MAX_OUTPUT_TOKENS = 2000;
     private static final int MAX_CONVERSATION_CHARS = 6_000;
     private static final int MAX_TERMINAL_ANSWER_CHARS = 4_000;
     /** Skip-retry template — the goal node has its own try/catch, no need to double-retry. */
@@ -209,7 +217,24 @@ public class GoalEvaluationService {
                 || response.getResult().getOutput() == null) {
             return null;
         }
-        return response.getResult().getOutput().getText();
+        var output = response.getResult().getOutput();
+        String text = output.getText();
+        if (text != null && !text.isBlank()) {
+            return text;
+        }
+        // Fallback for reasoning models: some providers (DeepSeek-style
+        // OpenAI-compatible streaming, MiMo) emit the entire output as
+        // `reasoning_content` and leave the regular content field empty
+        // when the token budget gets eaten by thinking. The JSON object
+        // we want often appears at the tail of the reasoning trace.
+        var metadata = output.getMetadata();
+        if (metadata != null) {
+            Object rc = metadata.get("reasoningContent");
+            if (rc instanceof String s && !s.isBlank()) {
+                return s;
+            }
+        }
+        return text;
     }
 
     /**
