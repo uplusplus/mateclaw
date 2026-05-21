@@ -1094,7 +1094,26 @@ const showGoalSetPrompt = computed(() => {
   // Need at least one user → assistant exchange so the prompt has
   // context to derive a suggested title from.
   const hasAssistantReply = messages.value.some(m => m.role === 'assistant')
-  return hasAssistantReply
+  if (!hasAssistantReply) return false
+  // Heuristic: don't claim "this looks multi-turn" without evidence. Fire
+  // the prompt only when at least one signal of a real ongoing task is
+  // present. Without these the prompt fires after one-shot Q&A like
+  // "三句话告诉我 X" and the copy lies to the user.
+  const userTurns = messages.value.filter(m => m.role === 'user').length
+  if (userTurns >= 2) return true // multiple user messages = ongoing thread
+  // Single-turn case: only suggest if the agent did non-trivial work.
+  return messages.value.some(m => {
+    if (m.role !== 'assistant') return false
+    const md: any = (m as any).metadata
+    if (!md) return false
+    // Tool calls — strongest signal of real work.
+    if (Array.isArray(md.toolCalls) && md.toolCalls.length > 0) return true
+    // Plan steps — Plan-Execute agent ran a multi-step plan.
+    if (md.plan && Array.isArray(md.plan.steps) && md.plan.steps.length > 1) return true
+    // Multiple ReAct iterations / segments — agent looped.
+    if (Array.isArray(md.segments) && md.segments.length > 3) return true
+    return false
+  })
 })
 
 // Build a sensible default title from the conversation's first user

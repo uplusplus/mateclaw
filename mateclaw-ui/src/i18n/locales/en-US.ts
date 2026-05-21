@@ -3664,7 +3664,7 @@ export default {
     goBack: 'Go back',
   },
   goal: {
-    inlinePrompt: 'Looks like this spans several turns. Set it as a goal so I can track it?',
+    inlinePrompt: 'Want me to track this as a goal?',
     inlinePromptAccept: 'Yes',
     inlinePromptDecline: 'No thanks',
     autoFollowup: 'Auto continuation',

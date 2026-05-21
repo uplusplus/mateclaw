@@ -3756,7 +3756,7 @@ export default {
     goBack: '返回上一页',
   },
   goal: {
-    inlinePrompt: '看起来这要跨好几轮。设为目标，我帮你跟着？',
+    inlinePrompt: '这件事要不要设成目标，我帮你跟着？',
     inlinePromptAccept: '好',
     inlinePromptDecline: '不用',
     autoFollowup: '自动延续',
