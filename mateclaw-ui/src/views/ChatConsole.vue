@@ -258,6 +258,7 @@ import ModelSelector from '@/components/chat/ModelSelector.vue'
 import { useEChartsRenderer } from '@/composables/useEChartsRenderer'
 import { useKatexRenderer } from '@/composables/useKatexRenderer'
 import { useMermaidRenderer, handleMermaidDownload } from '@/composables/useMermaidRenderer'
+import { useGoalStore } from '@/stores/useGoalStore'
 
 // ============ Talk Mode ============
 const showTalkMode = ref(false)
@@ -1007,6 +1008,16 @@ watch(() => route.query, () => {
 watch([selectedAgentId, currentConversationId], () => {
   syncRouteState()
 })
+
+// RFC 48 — load the active goal whenever the user switches conversation.
+// The avatar ring listens on goalStore.activeGoalByConv[cid]; without this
+// fetch the ring would only appear after an SSE event mutated the store.
+const goalStore = useGoalStore()
+watch(currentConversationId, async (cid) => {
+  if (cid) {
+    await goalStore.loadActiveForConversation(cid)
+  }
+}, { immediate: true })
 
 // Refetch agent capabilities (modalities + sidecar config) on agent change so
 // the multimodal routing hint above the input box can react synchronously when
