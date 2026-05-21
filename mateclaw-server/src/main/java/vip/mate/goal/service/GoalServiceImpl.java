@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,7 +43,6 @@ import java.util.function.IntSupplier;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class GoalServiceImpl implements GoalService {
 
     private static final int OPTIMISTIC_LOCK_MAX_RETRIES = 3;
@@ -52,6 +52,32 @@ public class GoalServiceImpl implements GoalService {
     private final GoalProperties properties;
     private final AuditEventService auditEventService;
     private final ObjectMapper objectMapper;
+
+    /**
+     * Optional — only set when the memory subsystem is wired. On goal
+     * completion we forward a synthetic "[goal completed] ..." turn so
+     * the memory dreaming pass can fold the outcome into long-term
+     * memory and the user can ask about it later. Failures are best
+     * effort: memory should never block the state-machine write.
+     */
+    private vip.mate.memory.spi.MemoryManager memoryManager;
+
+    public GoalServiceImpl(GoalMapper goalMapper,
+                           GoalEventMapper eventMapper,
+                           GoalProperties properties,
+                           AuditEventService auditEventService,
+                           ObjectMapper objectMapper) {
+        this.goalMapper = goalMapper;
+        this.eventMapper = eventMapper;
+        this.properties = properties;
+        this.auditEventService = auditEventService;
+        this.objectMapper = objectMapper;
+    }
+
+    @Autowired(required = false)
+    public void setMemoryManager(vip.mate.memory.spi.MemoryManager memoryManager) {
+        this.memoryManager = memoryManager;
+    }
 
     // ==================== CRUD ====================
 
@@ -256,6 +282,24 @@ public class GoalServiceImpl implements GoalService {
         detail.put("evalLlmCallsUsed", g.getEvalLlmCallsUsed());
         writeEvent(id, GoalEventType.COMPLETED, null, detail);
         recordAudit("goal.completed", g, detail);
+
+        // RFC 48 PR5 — forward to long-term memory. Best-effort: a failing
+        // memory pipeline must not roll back the DB transition.
+        if (memoryManager != null) {
+            try {
+                String summary = g.getProgressSummary() != null && !g.getProgressSummary().isBlank()
+                        ? g.getProgressSummary()
+                        : "Final score: " + (result != null ? result.score() : "—");
+                memoryManager.syncAll(
+                        g.getAgentId(),
+                        g.getConversationId(),
+                        "[goal completed] " + g.getTitle(),
+                        summary);
+            } catch (Exception e) {
+                log.debug("[GoalService] memory syncAll on goal completion failed: {}", e.getMessage());
+            }
+        }
+
         return goalMapper.selectById(id);
     }
 

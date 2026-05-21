@@ -17,8 +17,14 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "mateclaw.goal")
 public class GoalProperties {
 
-    /** Master switch — when off, the graph never invokes GoalEvaluationNode. */
-    private boolean enabled = false;
+    /**
+     * Master switch — when off, the graph never invokes GoalEvaluationNode
+     * (the conditional edge sees no active goal, so the node is unreachable).
+     * Defaults to true now that the full PR1-5 chain is in place; operators
+     * who want to disable goal evaluation can override via
+     * {@code mateclaw.goal.enabled=false} in application.yml.
+     */
+    private boolean enabled = true;
 
     /** Default turn budget when the user doesn't override. */
     private int defaultTurnBudget = 20;
