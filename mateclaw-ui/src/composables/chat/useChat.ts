@@ -746,8 +746,8 @@ export function useChat(options: UseChatOptions): UseChatReturn {
 
   // ===== Agent event handlers =====
 
-  // Body of tool_call_started — extracted so delegation_batch can replay the
-  // same behavior for buffered child events without duplicating logic.
+  // Body of tool_call_started. Used directly and reused once (split out as a
+  // function ⟶ no logic duplication).
   function handleToolCallStarted(data: any) {
     if (isStaleEvent(data)) return
     streamPhase.value = 'executing_tool'
@@ -1001,31 +1001,48 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       ? rawPayload
       : (() => { try { return JSON.parse(String(rawPayload || '{}')) } catch { return {} } })()
 
-    if (data.originalEvent === 'tool_call_started') {
-      const toolName = childData?.toolName || ''
-      if (toolName) {
-        delegSeg.toolArgs = (delegSeg.toolArgs || '') + `\n  → ${toolName}`
+    // Build a structured child timeline on the delegation segment instead of
+    // jamming tool names into toolArgs as text. The timeline holds the child
+    // agent's own plan checklist + the tools it called, so the UI can render
+    // a proper nested view (see ToolCallSegment.vue delegation branch).
+    const timeline = (delegSeg.childTimeline ||= { tools: [] })
+    if (!timeline.tools) timeline.tools = []
+
+    switch (data.originalEvent) {
+      case 'tool_call_started': {
+        const name = childData?.toolName || ''
+        if (name) timeline.tools.push({ name, status: 'running' })
+        break
       }
-    } else if (data.originalEvent === 'tool_call_completed') {
-      const toolName = childData?.toolName || ''
-      const success = childData?.success !== false
-      if (toolName) {
-        // Replace the matching "→ toolName" hint with "✓/✗ toolName"
-        delegSeg.toolArgs = (delegSeg.toolArgs || '').replace(
-          new RegExp(`\\n  → ${toolName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`),
-          `\n  ${success ? '✓' : '✗'} ${toolName}`)
+      case 'tool_call_completed': {
+        const name = childData?.toolName || ''
+        const ok = childData?.success !== false
+        // Match the most recent running entry with this name.
+        const entry = [...timeline.tools].reverse()
+          .find(t => t.name === name && t.status === 'running')
+        if (entry) entry.status = ok ? 'completed' : 'error'
+        break
       }
-    } else if (data.originalEvent === 'phase') {
-      const phase = childData?.phase || String(rawPayload || '')
-      const phaseHints: Record<string, string> = {
-        reasoning: '…',
-        executing_tool: '→',
-        planning: '📋',
-        summarizing: '✍',
+      case 'plan_created': {
+        const steps = childData?.steps
+        if (Array.isArray(steps)) {
+          timeline.plan = { planId: childData?.planId ?? '', steps, currentStep: 0, stepResults: [] }
+        }
+        break
       }
-      const hint = phaseHints[phase]
-      if (hint && !delegSeg.toolArgs?.endsWith(hint)) {
-        delegSeg.toolArgs = (delegSeg.toolArgs || '').trimEnd() + ' ' + hint
+      case 'plan_step_started': {
+        if (timeline.plan && typeof childData?.index === 'number') {
+          timeline.plan.currentStep = childData.index
+        }
+        break
+      }
+      case 'plan_step_completed': {
+        if (timeline.plan && typeof childData?.index === 'number') {
+          const results = [...(timeline.plan.stepResults || [])]
+          results[childData.index] = { result: childData.result ?? '', status: 'completed' }
+          timeline.plan.stepResults = results
+        }
+        break
       }
     }
     flushSegmentsToMessage()
@@ -1106,6 +1123,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
         if (delegSeg) {
           delegSeg.status = data.success ? 'completed' : 'error'
           delegSeg.toolSuccess = data.success
+          if (data.resultPreview) {
+            delegSeg.toolResult = data.resultPreview
+          }
           if (data.durationMs) {
             delegSeg.toolArgs = (delegSeg.toolArgs || '').trimEnd() + ` (${Math.round(data.durationMs / 1000)}s)`
           }
@@ -1211,26 +1231,9 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     flushSegmentsToMessage()
   })
 
-  stream.on('delegation_batch', (data) => {
-    if (isStaleEvent(data)) return
-    // Buffered child events from a delegated subagent. Replay them in order
-    // through the same handlers as live events so segment state stays
-    // consistent with the rest of the timeline.
-    const events = Array.isArray(data?.events) ? data.events : []
-    for (const ev of events) {
-      const evData = ev?.data ?? {}
-      switch (ev?.event) {
-        case 'tool_call_started':
-          handleToolCallStarted(evData)
-          break
-        case 'tool_call_completed':
-          handleToolCallCompleted(evData)
-          break
-        // Other event kinds (phase / thinking_delta / content_delta / etc.)
-        // are not currently produced inside batches; extend here when added.
-      }
-    }
-  })
+  // Delegation batch envelopes are unpacked server-side into individual
+  // delegation_progress events (see DelegateAgentTool.relayBatchEnvelope),
+  // so the frontend only handles delegation_progress — no batch handler needed.
 
   stream.on('plan_created', (data) => {
     if (isStaleEvent(data)) return

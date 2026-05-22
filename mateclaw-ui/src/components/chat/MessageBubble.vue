@@ -30,11 +30,14 @@
     <!-- 消息体 -->
     <div class="msg-body" :class="`${role}-body`">
       <div class="msg-bubble" :class="`${role}-bubble`">
+        <!-- Plan-step panel — always rendered at the top of the bubble whenever
+             this turn has a plan, in both the segmented and fallback render
+             paths, so plan-mode progress is never buried in a collapsed panel. -->
+        <PlanStepsPanel v-if="planMeta" :plan="planMeta" :is-generating="isGenerating" />
+
         <!-- ===== 分段式渲染模式（Claude Code 风格）===== -->
         <template v-if="useSegmentedView">
           <div class="segments-view">
-            <!-- 计划步骤面板（始终显示在 segments 之上） -->
-            <PlanStepsPanel v-if="planMeta" :plan="planMeta" :is-generating="isGenerating" />
             <template v-for="iter in groupedIterations" :key="iter.key">
               <!-- Iteration interrupted before any output landed — surface a chip
                    so the user knows the agent moved on instead of silently
@@ -117,9 +120,6 @@
 
           <Transition name="thinking-slide">
             <div v-if="executionExpanded" class="execution-content">
-              <!-- Plan 步骤进度 -->
-              <PlanStepsPanel v-if="planMeta" :plan="planMeta" :is-generating="isGenerating" />
-
               <!-- 工具调用列表 -->
               <div v-if="toolCallsMeta.length" class="tool-calls">
                 <div
@@ -139,7 +139,7 @@
                 </div>
               </div>
 
-              <div v-if="!toolCallsMeta.length && !planMeta" class="execution-empty">
+              <div v-if="!toolCallsMeta.length" class="execution-empty">
                 {{ currentPhaseName }}...
               </div>
             </div>
@@ -974,8 +974,18 @@ const segments = computed<MessageSegment[]>(() => {
   return segs
 })
 
-/** 是否使用分段模式渲染（有 segments 数据且包含多个分段） */
-const useSegmentedView = computed(() => segments.value.length > 1)
+/**
+ * Use segmented rendering when there are multiple segments, OR when the turn
+ * contains a delegation segment. Delegations live in `segments` but not in
+ * `metadata.toolCalls`, so the fallback path (which only reads toolCalls)
+ * renders nothing for them — a single-step plan that delegates to a subagent
+ * would otherwise show the subagent call as completely invisible. Forcing
+ * segmented view here makes delegation surface as a timeline entry.
+ */
+const useSegmentedView = computed(() =>
+  segments.value.length > 1 ||
+  segments.value.some(s => s.type === 'tool_call' && (s.toolName || '').startsWith('→'))
+)
 
 /**
  * Group segments by iterationIndex so each ReAct iteration renders as its own
@@ -1168,8 +1178,9 @@ const executionPhaseLabel = computed(() => {
 
 const showExecutionPanel = computed(() => {
   if (role.value !== 'assistant') return false
-  // 审批卡片有独立的渲染区域，但 execution panel 也应该在审批阶段展示上下文
-  return toolCallsMeta.value.length > 0 || !!planMeta.value
+  // The plan-step panel renders top-level outside this execution panel,
+  // so plan presence alone no longer keeps an (otherwise empty) panel open.
+  return toolCallsMeta.value.length > 0
     || (isGenerating.value && parsedMetadata.value?.currentPhase)
     || !!pendingApproval.value
 })
