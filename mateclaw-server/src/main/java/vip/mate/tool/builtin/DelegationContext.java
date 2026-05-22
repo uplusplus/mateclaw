@@ -17,8 +17,17 @@ public final class DelegationContext {
 
     /**
      * Snapshot of one delegation layer's state.
+     *
+     * <p>{@code rootConversationId} is the human-facing conversation at the top
+     * of the delegation tree — every layer carries it unchanged so that a
+     * grandchild's progress events can be broadcast to the same stream the user
+     * is watching, rather than to its immediate (machine-only) parent.
+     * {@code currentSubagentId} is the id of the subagent running THIS layer; a
+     * deeper child reads it as its own {@code parentSubagentId} to reconstruct
+     * the spawn tree.
      */
-    private record Frame(String parentConversationId, Set<String> childDeniedTools) {}
+    private record Frame(String parentConversationId, Set<String> childDeniedTools,
+                         String rootConversationId, String currentSubagentId) {}
 
     private static final ThreadLocal<Deque<Frame>> STACK = ThreadLocal.withInitial(ArrayDeque::new);
 
@@ -41,14 +50,36 @@ public final class DelegationContext {
         return top != null && top.childDeniedTools != null ? top.childDeniedTools : Set.of();
     }
 
+    /** Root (human-facing) conversation ID for the whole tree, or null at top level. */
+    public static String rootConversationId() {
+        Frame top = STACK.get().peek();
+        return top != null ? top.rootConversationId : null;
+    }
+
+    /** Subagent id of the layer currently executing, or null at top level. */
+    public static String currentSubagentId() {
+        Frame top = STACK.get().peek();
+        return top != null ? top.currentSubagentId : null;
+    }
+
     /** Enter the next delegation layer (with parent conversation ID and child tool restrictions) */
     public static void enter(String parentConversationId, Set<String> deniedTools) {
-        STACK.get().push(new Frame(parentConversationId, deniedTools));
+        enter(parentConversationId, deniedTools, null, null);
+    }
+
+    /**
+     * Enter the next delegation layer carrying the full tree identity so deeper
+     * children can broadcast to the root conversation and tag their parent.
+     */
+    public static void enter(String parentConversationId, Set<String> deniedTools,
+                             String rootConversationId, String currentSubagentId) {
+        STACK.get().push(new Frame(parentConversationId, deniedTools,
+                rootConversationId, currentSubagentId));
     }
 
     /** Enter the next delegation layer (backward-compatible overload) */
     public static void enter() {
-        enter(null, null);
+        enter(null, null, null, null);
     }
 
     /** Exit the current delegation layer, restoring the previous layer's context */

@@ -90,6 +90,8 @@ export default {
     thinkingInProgress: 'Thinking...',
     stopped: 'Generation stopped',
     interrupted: 'Interrupted',
+    subagentStalled: 'Subagent stalled — no progress',
+    subagentAsync: 'Running in background — result via task_output',
     expandLines: 'Show more ({hidden} more lines)',
     collapse: 'Show less',
     failed: 'Generation failed',

@@ -90,6 +90,8 @@ export default {
     thinkingInProgress: '思考中...',
     stopped: '已停止生成',
     interrupted: '已中断',
+    subagentStalled: '子 Agent 无进展',
+    subagentAsync: '后台运行中，结果稍后获取',
     expandLines: '展开（还有 {hidden} 行）',
     collapse: '收起',
     failed: '生成失败',

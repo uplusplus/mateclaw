@@ -306,6 +306,11 @@ export interface LiveSubagentCard {
   subagentId: string
   parentConversationId: string | null
   childConversationId: string | null
+  rootConversationId: string | null
+  /** subagentId of the immediate parent; null for first-level (depth-1) children. */
+  parentSubagentId: string | null
+  /** 1 for a first-level child, 2 for a grandchild, etc. */
+  depth: number
   agentId: number | null
   agentName: string | null
   agentIcon: string | null
