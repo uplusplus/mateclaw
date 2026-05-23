@@ -519,6 +519,7 @@ public class AgentGraphBuilder {
                     // Token Usage
                     .addStrategy(MateClawStateKeys.PROMPT_TOKENS, KeyStrategy.REPLACE)
                     .addStrategy(MateClawStateKeys.COMPLETION_TOKENS, KeyStrategy.REPLACE)
+                    .addStrategy(MateClawStateKeys.LLM_CALL_COUNT, KeyStrategy.REPLACE)
                     .addStrategy(MateClawStateKeys.RUNTIME_MODEL_NAME, KeyStrategy.REPLACE)
                     .addStrategy(MateClawStateKeys.RUNTIME_PROVIDER_ID, KeyStrategy.REPLACE)
                     // SourceEvidenceLedger: ActionNode 把每轮 ToolResponse 抽取出的
@@ -540,6 +541,8 @@ public class AgentGraphBuilder {
                     .addStrategy(MateClawStateKeys.GOAL_FOLLOWUP_INJECTED, KeyStrategy.REPLACE)
                     .addStrategy(MateClawStateKeys.GOAL_FOLLOWUP_PROMPT, KeyStrategy.REPLACE)
                     .addStrategy(MateClawStateKeys.GOAL_EVALUATED_THIS_RUN, KeyStrategy.REPLACE)
+                    .addStrategy(MateClawStateKeys.GOAL_FOLLOWUP_COUNT, KeyStrategy.REPLACE)
+                    .addStrategy(MateClawStateKeys.GOAL_ACCOUNTED_LLM_CALL_COUNT, KeyStrategy.REPLACE)
                     // Skill progressive disclosure — pinned skills loaded this
                     // run. Registered in BOTH graphs so the read-merge-write in
                     // ActionNode is not dropped on multi-node merges.
@@ -798,6 +801,8 @@ public class AgentGraphBuilder {
                     .addStrategy(MateClawStateKeys.GOAL_FOLLOWUP_INJECTED, KeyStrategy.REPLACE)
                     .addStrategy(MateClawStateKeys.GOAL_FOLLOWUP_PROMPT, KeyStrategy.REPLACE)
                     .addStrategy(MateClawStateKeys.GOAL_EVALUATED_THIS_RUN, KeyStrategy.REPLACE)
+                    .addStrategy(MateClawStateKeys.GOAL_FOLLOWUP_COUNT, KeyStrategy.REPLACE)
+                    .addStrategy(MateClawStateKeys.GOAL_ACCOUNTED_LLM_CALL_COUNT, KeyStrategy.REPLACE)
                     // Skill progressive disclosure — pinned skills loaded this
                     // run. Registered in BOTH graphs so the read-merge-write in
                     // ActionNode is not dropped on multi-node merges.

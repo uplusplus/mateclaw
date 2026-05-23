@@ -293,6 +293,16 @@ public final class MateClawStateAccessor {
         return state.value(GOAL_FOLLOWUP_PROMPT, "");
     }
 
+    /** Auto-followups already injected in this graph run (0 at run start). */
+    public int goalFollowupCount() {
+        return state.value(GOAL_FOLLOWUP_COUNT, 0);
+    }
+
+    /** Cumulative agent LLM calls already billed to the goal this run (0 at run start). */
+    public int goalAccountedLlmCallCount() {
+        return state.value(GOAL_ACCOUNTED_LLM_CALL_COUNT, 0);
+    }
+
     /**
      * Bridge across ReAct and Plan-Execute: ReAct writes the terminal text
      * to {@link MateClawStateKeys#FINAL_ANSWER} via FinalAnswerNode;
@@ -532,6 +542,14 @@ public final class MateClawStateAccessor {
 
         public OutputBuilder goalEvaluatedThisRun(boolean v) {
             return put(GOAL_EVALUATED_THIS_RUN, v);
+        }
+
+        public OutputBuilder goalFollowupCount(int n) {
+            return put(GOAL_FOLLOWUP_COUNT, n);
+        }
+
+        public OutputBuilder goalAccountedLlmCallCount(int n) {
+            return put(GOAL_ACCOUNTED_LLM_CALL_COUNT, n);
         }
 
         /** Wipe FINAL_ANSWER on follow-up so the next graph pass doesn't

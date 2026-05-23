@@ -200,13 +200,33 @@ public final class MateClawStateKeys {
     public static final String GOAL_FOLLOWUP_PROMPT = "goal_followup_prompt";
 
     /**
-     * Re-entry guard: GoalEvaluationNode sets this true on its first run
-     * of a graph invocation; the FinalAnswerNode→GoalEvaluation conditional
-     * edge skips re-entering the node when it's already true. Combined with
-     * the dispatcher's followup clearing of FINAL_ANSWER, this bounds
-     * follow-ups to at most one per graph run.
+     * Re-entry guard for TERMINAL evaluation passes: GoalEvaluationNode sets
+     * this true only when it ENDS the run (completed / exhausted / skip /
+     * continue-without-followup). The FinalAnswerNode→GoalEvaluation edge skips
+     * re-entering once it's true. The followup branch deliberately leaves it
+     * false so the self-continuation loop can re-evaluate the next answer; that
+     * loop is bounded instead by {@link #GOAL_FOLLOWUP_COUNT} (per-run cap) plus
+     * the goal's turn / LLM-call budgets.
      */
     public static final String GOAL_EVALUATED_THIS_RUN = "goal_evaluated_this_run";
+
+    /**
+     * Number of auto-followups already injected in THIS graph run (one user
+     * turn). Bounds the self-continuation loop per single message — independent
+     * of the goal's cross-turn turn_budget — so one message can't drive an
+     * unbounded number of autonomous steps or exhaust the graph recursion
+     * limit. Implicitly 0 at the start of each graph invocation.
+     */
+    public static final String GOAL_FOLLOWUP_COUNT = "goal_followup_count";
+
+    /**
+     * Cumulative agent LLM-call count already billed to the goal in THIS graph
+     * run. The run-to-completion loop evaluates multiple times per run while
+     * {@link #LLM_CALL_COUNT} keeps growing; recording only
+     * (current − accounted) on each pass avoids re-billing earlier calls and
+     * exhausting the goal's LLM budget prematurely. Implicitly 0 at run start.
+     */
+    public static final String GOAL_ACCOUNTED_LLM_CALL_COUNT = "goal_accounted_llm_call_count";
 
     /** Graph-node identifier for the GoalEvaluationNode. */
     public static final String GOAL_EVALUATION_NODE = "goal_evaluation";

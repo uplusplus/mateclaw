@@ -302,7 +302,7 @@ public class DelegateAgentTool {
         ChildResult result;
         try {
             result = runSingleChild(0, target, taskWithContext, parentConversationId, childConversationId,
-                    parentOrigin, rootConversationId, subagentId);
+                    parentOrigin, rootConversationId, subagentId, childDepth);
         } finally {
             // Cleanup relay + registry regardless of how the child returned
             // (success / exception / interruption) so we never leak entries.
@@ -440,7 +440,7 @@ public class DelegateAgentTool {
         for (PreparedChild p : prepared) {
             CompletableFuture<ChildResult> future = CompletableFuture.supplyAsync(
                     () -> runSingleChild(p.index, p.agent, p.task, parentConversationId, p.childConvId,
-                            parentOriginParallel, rootConvFinal, p.subagentId),
+                            parentOriginParallel, rootConvFinal, p.subagentId, childDepth),
                     DELEGATION_EXECUTOR);
 
             // Broadcast per-child completion as soon as each child finishes
@@ -723,7 +723,7 @@ public class DelegateAgentTool {
                         try {
                             ChildResult childResult = runSingleChild(0, target, task,
                                     parentConversationId, childConversationId, parentOrigin,
-                                    rootConvAsync, subagentId);
+                                    rootConvAsync, subagentId, childDepth);
                             return childResult.toToolResponse(target.getName());
                         } finally {
                             subagentRegistry.get(subagentId).ifPresent(rec -> {
@@ -933,7 +933,7 @@ public class DelegateAgentTool {
     private ChildResult runSingleChild(int taskIndex, AgentEntity target, String task,
                                         String parentConversationId, String childConversationId,
                                         ChatOrigin parentOrigin,
-                                        String rootConversationId, String subagentId) {
+                                        String rootConversationId, String subagentId, int childDepth) {
         boolean relayChildEvents = parentConversationId != null && streamTracker.isRunning(parentConversationId);
         if (relayChildEvents) {
             streamTracker.register(childConversationId);
@@ -941,8 +941,10 @@ public class DelegateAgentTool {
         }
         // Carry root conversation + this child's subagentId into the context so
         // a grandchild broadcasts to the root stream and tags this as its parent.
+        // Pass the real tree depth so the gate survives the executor-thread hop:
+        // async/parallel children run with an empty ThreadLocal stack.
         DelegationContext.enter(parentConversationId, deniedToolsForChild(),
-                rootConversationId, subagentId);
+                rootConversationId, subagentId, childDepth);
         try {
             long startTime = System.currentTimeMillis();
             // RFC-063r §2.5 改动点 5: inherit parent origin, swap agentId

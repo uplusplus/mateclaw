@@ -27,15 +27,29 @@ public final class DelegationContext {
      * the spawn tree.
      */
     private record Frame(String parentConversationId, Set<String> childDeniedTools,
-                         String rootConversationId, String currentSubagentId) {}
+                         String rootConversationId, String currentSubagentId, int depth) {}
 
     private static final ThreadLocal<Deque<Frame>> STACK = ThreadLocal.withInitial(ArrayDeque::new);
 
     private DelegationContext() {}
 
-    /** Current delegation depth (0 = top-level call, not inside any delegation) */
+    /**
+     * Current delegation depth (0 = top-level call, not inside any delegation).
+     * <p>Read from the TOP frame's recorded depth, NOT the thread-local stack
+     * size: async / parallel children run on fresh executor threads where the
+     * stack starts empty, so a size-based depth would reset to 1 at every async
+     * hop and let a child bypass {@code MAX_DELEGATION_DEPTH}. The real tree
+     * depth is carried in via {@link #enter(String, Set, String, String, int)}.
+     */
     public static int currentDepth() {
-        return STACK.get().size();
+        Frame top = STACK.get().peek();
+        return top != null ? top.depth : 0;
+    }
+
+    /** Depth for the next layer when the caller doesn't pass one explicitly. */
+    private static int nextDepth() {
+        Frame top = STACK.get().peek();
+        return (top != null ? top.depth : 0) + 1;
     }
 
     /** Parent conversation ID for event relay (from the current frame) */
@@ -64,22 +78,35 @@ public final class DelegationContext {
 
     /** Enter the next delegation layer (with parent conversation ID and child tool restrictions) */
     public static void enter(String parentConversationId, Set<String> deniedTools) {
-        enter(parentConversationId, deniedTools, null, null);
+        enter(parentConversationId, deniedTools, null, null, nextDepth());
     }
 
     /**
      * Enter the next delegation layer carrying the full tree identity so deeper
      * children can broadcast to the root conversation and tag their parent.
+     * Depth is inferred from the current frame; use the explicit-depth overload
+     * from executor threads where the stack starts empty.
      */
     public static void enter(String parentConversationId, Set<String> deniedTools,
                              String rootConversationId, String currentSubagentId) {
+        enter(parentConversationId, deniedTools, rootConversationId, currentSubagentId, nextDepth());
+    }
+
+    /**
+     * Enter the next delegation layer with an EXPLICIT tree depth. Async /
+     * parallel children run on fresh executor threads with an empty stack, so
+     * they must pass the real {@code childDepth} computed on the dispatching
+     * thread — otherwise depth-based recursion limits reset at every hop.
+     */
+    public static void enter(String parentConversationId, Set<String> deniedTools,
+                             String rootConversationId, String currentSubagentId, int depth) {
         STACK.get().push(new Frame(parentConversationId, deniedTools,
-                rootConversationId, currentSubagentId));
+                rootConversationId, currentSubagentId, depth));
     }
 
     /** Enter the next delegation layer (backward-compatible overload) */
     public static void enter() {
-        enter(null, null, null, null);
+        enter(null, null, null, null, nextDepth());
     }
 
     /** Exit the current delegation layer, restoring the previous layer's context */
