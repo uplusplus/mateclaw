@@ -80,6 +80,7 @@ public class AgentGraphBuilder {
     private final SkillService skillService;
     private final vip.mate.skill.runtime.SkillRuntimeService skillRuntimeService;
     private final vip.mate.tool.disclosure.ToolDisclosureService toolDisclosureService;
+    private final vip.mate.agent.progress.ProgressLedgerService progressLedgerService;
 
     /** Escape hatch: when false, the load_skill meta tool is not advertised. */
     @org.springframework.beans.factory.annotation.Value(
@@ -704,7 +705,7 @@ public class AgentGraphBuilder {
             ReasoningNode reasoningNode = new ReasoningNode(chatModel, toolSet, reasoningEffort,
                     supportsReasoningEffort,
                     streamingHelper, conversationWindowManager, streamTracker, 0, wikiContextService,
-                    skillCatalogRenderer, toolDisclosureService);
+                    skillCatalogRenderer, toolDisclosureService, progressLedgerService);
             ActionNode actionNode = new ActionNode(executor, streamTracker);
             ObservationProcessor observationProcessor = new ObservationProcessor(graphObservationProperties);
             ObservationNode observationNode = new ObservationNode(observationProcessor, streamTracker);

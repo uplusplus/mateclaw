@@ -128,7 +128,16 @@ public class ReasoningNode implements NodeAction {
             + "- 如果上一次工具调用因 args JSON 截断（max_tokens 超限）失败，\n"
             + "  请重新调用同一工具但**缩小内容**，或拆成多次顺序调用，**不要改成纯文字回答**。\n"
             + "- 只在确实没有合适工具，或所有工具步骤都已完成、可以最终回答用户时，\n"
-            + "  才输出无 tool_call 的纯文字回答。\n";
+            + "  才输出无 tool_call 的纯文字回答。\n\n"
+            + "## 进度跟踪（多步任务必读）\n\n"
+            + "- 对于包含 ≥3 个独立子步骤的任务（逐项调研、分节起草、批量生成等），\n"
+            + "  你**应当**使用 `progress_update` 工具维护进度账本：\n"
+            + "  1. 任务起手时为每个子步骤注册一条 `pending` 条目；\n"
+            + "  2. 开始执行某条前切到 `in_progress`；\n"
+            + "  3. 完成后立即切到 `done`；遇到阻塞切到 `blocked` 并写明原因。\n"
+            + "- 系统会在你的每一次推理前注入一份**当前进度快照**（标题 \"当前任务进度\"），\n"
+            + "  请把它视为权威的\"已完成清单\"，**不要重复执行已经 done 的步骤**。\n"
+            + "- 单一问题（无须拆解的短任务）不需要使用本工具；用错不会报错，但会浪费一次调用。\n";
 
     private final ChatModel chatModel;
     private final List<ToolCallback> toolCallbacks;
@@ -164,6 +173,16 @@ public class ReasoningNode implements NodeAction {
      * constructors — when null, no catalog segment is appended.
      */
     private final vip.mate.skill.runtime.SkillCatalogRenderer skillCatalogRenderer;
+
+    /**
+     * Loads the per-conversation progress ledger each reasoning step so a
+     * compact snapshot can be injected into {@code nonHistoryPrefix} —
+     * surviving message-window trims so the agent never loses track of
+     * "what is already done" on long multi-step tasks. Null in legacy /
+     * test constructors; when null the snapshot block is suppressed and
+     * the prompt is identical to pre-feature behavior.
+     */
+    private final vip.mate.agent.progress.ProgressLedgerService progressLedgerService;
 
     public ReasoningNode(ChatModel chatModel, AgentToolSet toolSet, String reasoningEffort,
                          NodeStreamingChatHelper streamingHelper,
@@ -230,9 +249,10 @@ public class ReasoningNode implements NodeAction {
     }
 
     /**
-     * Primary constructor with the {@link vip.mate.tool.disclosure.ToolDisclosureService}.
-     * When non-null, {@code buildChatOptions} advertises only core tools plus
-     * the extensions enabled this run; when null, the full tool set is advertised.
+     * Backward-compatible delegate for callers built before the
+     * {@link vip.mate.agent.progress.ProgressLedgerService} was wired in —
+     * passes {@code null} so the progress snapshot block is suppressed.
+     * New call sites should use the 13-arg primary constructor below.
      */
     public ReasoningNode(ChatModel chatModel, AgentToolSet toolSet, String reasoningEffort,
                          boolean supportsReasoningEffort,
@@ -242,6 +262,26 @@ public class ReasoningNode implements NodeAction {
                          vip.mate.wiki.service.WikiContextService wikiContextService,
                          vip.mate.skill.runtime.SkillCatalogRenderer skillCatalogRenderer,
                          vip.mate.tool.disclosure.ToolDisclosureService toolDisclosureService) {
+        this(chatModel, toolSet, reasoningEffort, supportsReasoningEffort, streamingHelper,
+                conversationWindowManager, streamTracker, maxOutputTokens, wikiContextService,
+                skillCatalogRenderer, toolDisclosureService, null);
+    }
+
+    /**
+     * Primary constructor with the {@link vip.mate.agent.progress.ProgressLedgerService}.
+     * When non-null, a compact snapshot of the conversation's progress ledger
+     * is appended to {@code nonHistoryPrefix} each turn so the agent retains
+     * its "what is already done" view across message-window trims.
+     */
+    public ReasoningNode(ChatModel chatModel, AgentToolSet toolSet, String reasoningEffort,
+                         boolean supportsReasoningEffort,
+                         NodeStreamingChatHelper streamingHelper,
+                         ConversationWindowManager conversationWindowManager,
+                         ChatStreamTracker streamTracker, int maxOutputTokens,
+                         vip.mate.wiki.service.WikiContextService wikiContextService,
+                         vip.mate.skill.runtime.SkillCatalogRenderer skillCatalogRenderer,
+                         vip.mate.tool.disclosure.ToolDisclosureService toolDisclosureService,
+                         vip.mate.agent.progress.ProgressLedgerService progressLedgerService) {
         this.chatModel = chatModel;
         this.toolSet = toolSet;
         this.toolCallbacks = toolSet.callbacks();
@@ -254,6 +294,7 @@ public class ReasoningNode implements NodeAction {
         this.maxOutputTokens = maxOutputTokens > 0 ? maxOutputTokens : DEFAULT_MAX_OUTPUT_TOKENS;
         this.wikiContextService = wikiContextService;
         this.skillCatalogRenderer = skillCatalogRenderer;
+        this.progressLedgerService = progressLedgerService;
     }
 
     public ReasoningNode(ChatModel chatModel, AgentToolSet toolSet, String reasoningEffort,
@@ -289,6 +330,7 @@ public class ReasoningNode implements NodeAction {
         this.maxOutputTokens = DEFAULT_MAX_OUTPUT_TOKENS;
         this.wikiContextService = null;
         this.skillCatalogRenderer = null;
+        this.progressLedgerService = null;
     }
 
     @Override
@@ -448,6 +490,26 @@ public class ReasoningNode implements NodeAction {
             String skillCatalog = skillCatalogRenderer.render(accessor.loadedSkills());
             if (skillCatalog != null && !skillCatalog.isBlank()) {
                 nonHistoryPrefix.add(1, new SystemMessage(skillCatalog));
+            }
+        }
+
+        // Inject the conversation's progress-ledger snapshot as a separate
+        // SystemMessage. Sits in nonHistoryPrefix (never trimmed) so the
+        // agent always sees its own "what's done / what's pending" record
+        // even after the message-window trim above drops the tool-call
+        // history that produced those done entries. Suppressed when the
+        // ledger column is empty so short single-turn questions stay
+        // prompt-cache-friendly.
+        if (progressLedgerService != null && conversationId != null && !conversationId.isBlank()) {
+            try {
+                String snapshot = progressLedgerService.load(conversationId).renderSnapshot();
+                if (snapshot != null) {
+                    nonHistoryPrefix.add(new SystemMessage(snapshot));
+                }
+            } catch (Exception e) {
+                // Never let a ledger-side failure break the reasoning step.
+                log.warn("[ReasoningNode] Failed to load progress ledger for {}: {}",
+                        conversationId, e.getMessage());
             }
         }
 

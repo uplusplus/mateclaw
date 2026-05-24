@@ -581,6 +581,12 @@ public class AgentBindingService implements AgentBindingResolver {
             "addGoalCriterion",
             "completeGoal",
             "getGoalStatus",
+            // Conversation-scoped progress ledger — same rationale as the
+            // goal primitives above. Long multi-step research / drafting
+            // tasks need it on every business agent, not just the planner,
+            // since context-window trims can otherwise let an agent forget
+            // what it has already produced and re-do work or stall.
+            "progress_update",
             // Document / media generation — agent-wide capabilities, never
             // declared inside any skill manifest. Pre-Phase-2b these were
             // universally visible; the new gate silently strips them whenever
