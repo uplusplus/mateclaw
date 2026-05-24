@@ -37,7 +37,7 @@ class ProgressLedgerToolTest {
     }
 
     @Test
-    @DisplayName("Happy path: valid args persist + return entry count.")
+    @DisplayName("Happy path: tool result includes the full rendered snapshot for positive feedback.")
     void happyPath() {
         ToolExecutionContext.set("conv-1", "admin");
         ProgressLedgerService service = mock(ProgressLedgerService.class);
@@ -51,7 +51,13 @@ class ProgressLedgerToolTest {
         ProgressLedgerTool tool = new ProgressLedgerTool(service);
         String out = tool.progress_update("step_a", "Step A", "in_progress", "starting now", null);
 
-        assertEquals("Recorded step_a → in_progress. Ledger now has 1 entries.", out);
+        // Header line confirms the write so the model has a clear ack.
+        assertTrue(out.startsWith("✓ Recorded step_a → in_progress (1 entries total)"), out);
+        // The rendered snapshot must be appended so the model sees its own
+        // update reflected in the same view the runtime injects each turn.
+        assertTrue(out.contains("当前任务进度"), "expected snapshot in tool result: " + out);
+        assertTrue(out.contains("Step A"), "expected entry label in snapshot: " + out);
+        assertTrue(out.contains("`step_a`"), "expected bracketed key in snapshot: " + out);
         verify(service, times(1)).upsert(any(), any(), any(), any(), any());
     }
 

@@ -70,8 +70,23 @@ public class ProgressLedgerTool {
         }
         try {
             ProgressLedger updated = service.upsert(conversationId, stepKey, label, parsed, note);
-            return "Recorded " + stepKey + " → " + parsed.wireValue()
-                    + ". Ledger now has " + updated.size() + " entries.";
+            // Return the freshly-rendered snapshot in the tool result so the
+            // model immediately sees its own update reflected in the
+            // canonical view it will be reading next iteration. Without this
+            // positive-feedback loop the model treats progress_update as a
+            // fire-and-forget side effect and stops calling it after the
+            // first few transitions (observed: round-4 dropped to 3 calls in
+            // 27 minutes of work). The snapshot is also what the runtime
+            // injects pre-LLM-call, so echoing it here keeps the two views
+            // identical.
+            StringBuilder out = new StringBuilder(256);
+            out.append("✓ Recorded ").append(stepKey).append(" → ").append(parsed.wireValue())
+                    .append(" (").append(updated.size()).append(" entries total).\n\n");
+            String snapshot = updated.renderSnapshot();
+            if (snapshot != null) {
+                out.append(snapshot);
+            }
+            return out.toString();
         } catch (Exception e) {
             log.warn("progress_update failed for conv={} key={}: {}", conversationId, stepKey, e.getMessage());
             return "Error: failed to persist progress entry — " + e.getMessage();
