@@ -1545,6 +1545,27 @@ public class ChatStreamTracker {
             }
 
             if (shouldEvict) {
+                // Flush any accumulated assistant content/segments BEFORE we
+                // dispose the run — mirrors {@link #onShutdown()} so an idle-
+                // timeout eviction doesn't leave the conversation with only
+                // the user message and no assistant trace (the round-6
+                // failure mode: SSE evicted mid-stream, UI refresh saw blank
+                // because doOnComplete never fired for the disposed Flux).
+                // Skip on completed runs — they already saved via the normal
+                // doOnComplete path.
+                if (!state.done) {
+                    Runnable cb = state.emergencySaveCallback;
+                    if (cb != null) {
+                        try {
+                            cb.run();
+                            log.info("[SSE] Emergency-saved state for conversation={} before eviction",
+                                    entry.getKey());
+                        } catch (Exception ex) {
+                            log.warn("[SSE] Emergency save failed for conversation={}: {}",
+                                    entry.getKey(), ex.getMessage());
+                        }
+                    }
+                }
                 // 先清理资源再移除
                 stopHeartbeat(entry.getKey());
                 Disposable d = state.disposable;
