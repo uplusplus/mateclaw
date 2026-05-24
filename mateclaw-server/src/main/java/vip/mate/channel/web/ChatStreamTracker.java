@@ -1464,17 +1464,64 @@ public class ChatStreamTracker {
 
     /** 已完成的 RunState 保留时间（5 分钟） */
     private static final long DONE_RETENTION_MS = 5 * 60 * 1000;
-    /** RunState 最大存活时间（30 分钟，防止挂起的流永远占内存） */
-    private static final long MAX_LIFETIME_MS = 30 * 60 * 1000;
+
+    /**
+     * RunState 最长无活动时间。从 wall-clock {@code MAX_LIFETIME_MS=30min}
+     * 切换到 inactivity-based 后默认 30 min — 与 hermes-agent 的
+     * {@code gateway_timeout=1800s} 同口径：只要 agent 还在持续产事件
+     * （tool call / content delta / phase transition / progress_update），
+     * 就一直活下去，墙钟跑 1 小时 2 小时都可以。只有真正"完全静默 ≥ N 分钟"
+     * 才视为卡死并强制清理。
+     *
+     * <p>修复的背景：round-6 的 10-LLM 横评任务实际跑了 47 min，全程都在
+     * 出 tool call，但旧的 wall-clock 30 min 死线在 iter 128 / 8 of 10
+     * 就把 RunState 清掉了 — SSE 流死、UI 空白、用户以为任务挂了。换成
+     * inactivity 后，那种长任务永远不会被误清，而真正卡死的 agent（无活动
+     * 5+ 分钟）会按时清理。可通过 property
+     * {@code mateclaw.sse.idle-timeout-minutes} 调整。
+     */
+    @org.springframework.beans.factory.annotation.Value("${mateclaw.sse.idle-timeout-minutes:30}")
+    private int idleTimeoutMinutes = 30;
+
+    /**
+     * Test hook — backdates the {@code lastEventAt} timestamp on an
+     * existing RunState so {@link #cleanupStaleRuns()} can be exercised
+     * deterministically without sleeping for minutes. Package-private on
+     * purpose; production callers go through {@link #broadcast} which
+     * stamps the field forward.
+     */
+    void backdateLastEventForTesting(String conversationId, long lastEventAt) {
+        RunState state = runs.get(conversationId);
+        if (state != null) {
+            state.lastEventAt = lastEventAt;
+        }
+    }
+
+    /** Test hook — true when a RunState row exists for the conversation. */
+    boolean hasRunStateForTesting(String conversationId) {
+        return runs.containsKey(conversationId);
+    }
+
+    /** Test hook — exposes the configurable timeout for assertion. */
+    int idleTimeoutMinutesForTesting() {
+        return idleTimeoutMinutes;
+    }
+
+    /** Test hook — override the timeout in pure-unit tests that bypass Spring. */
+    void setIdleTimeoutMinutesForTesting(int minutes) {
+        this.idleTimeoutMinutes = minutes;
+    }
 
     /**
      * 定期清理过期的 RunState，防止内存泄漏。
-     * - 已完成超过 5 分钟的 → 移除
-     * - 存活超过 30 分钟的（无论是否完成）→ 强制移除
+     * - 已完成超过 {@link #DONE_RETENTION_MS} 的 → 移除
+     * - 自 {@link RunState#lastEventAt} 算起静默超过
+     *   {@link #idleTimeoutMinutes} 分钟的 → 强制移除（视为卡死）
      */
     @org.springframework.scheduling.annotation.Scheduled(fixedRate = 600_000)
     public void cleanupStaleRuns() {
         long now = System.currentTimeMillis();
+        long idleThresholdMs = (long) idleTimeoutMinutes * 60_000L;
         int evicted = 0;
 
         var iterator = runs.entrySet().iterator();
@@ -1482,6 +1529,7 @@ public class ChatStreamTracker {
             var entry = iterator.next();
             RunState state = entry.getValue();
             long age = now - state.createdAt;
+            long idleMs = now - state.lastEventAt;
 
             boolean shouldEvict = false;
             String reason = null;
@@ -1489,9 +1537,11 @@ public class ChatStreamTracker {
             if (state.done && age > DONE_RETENTION_MS) {
                 shouldEvict = true;
                 reason = "completed and expired";
-            } else if (age > MAX_LIFETIME_MS) {
+            } else if (idleMs > idleThresholdMs) {
                 shouldEvict = true;
-                reason = "exceeded max lifetime (" + (age / 1000) + "s)";
+                reason = "idle for " + (idleMs / 1000) + "s (threshold "
+                        + idleTimeoutMinutes + "min); total wall-clock age "
+                        + (age / 1000) + "s";
             }
 
             if (shouldEvict) {
