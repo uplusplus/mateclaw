@@ -3,8 +3,10 @@ package vip.mate.tool.builtin;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -51,7 +53,10 @@ public class ShellExecuteTool {
             + "Dangerous operations trigger security approval. Returns structured result with exitCode, stdout, stderr, timedOut.")
     public String execute_shell_command(
             @ToolParam(description = "Shell command to execute") String command,
-            @ToolParam(description = "Timeout in seconds, default 60", required = false) Integer timeoutSeconds) {
+            @ToolParam(description = "Timeout in seconds, default 60", required = false) Integer timeoutSeconds,
+            // RFC-063r §2.5: hidden from LLM by JsonSchemaGenerator. Carries the
+            // ChatOrigin so the workspace boundary check honors per-agent basePath.
+            @Nullable ToolContext ctx) {
 
         int timeout = (timeoutSeconds != null && timeoutSeconds > 0) ? timeoutSeconds : DEFAULT_TIMEOUT_SECONDS;
         // 硬上限：不允许超过 300 秒
@@ -62,6 +67,21 @@ public class ShellExecuteTool {
 
         JSONObject result = new JSONObject();
         result.set("command", command);
+
+        // Enforce the workspace boundary on the command string itself before
+        // the process starts. The pb.directory() set later only constrains
+        // the CWD — absolute paths in the command would still reach anywhere.
+        try {
+            vip.mate.tool.guard.WorkspacePathGuard.validateShellCommand(command, ctx);
+        } catch (IllegalArgumentException e) {
+            log.warn("[ShellExecute] Sandbox rejected command: {}", e.getMessage());
+            result.set("exitCode", -1);
+            result.set("stdout", "");
+            result.set("stderr", e.getMessage());
+            result.set("timedOut", false);
+            result.set("error", e.getMessage());
+            return JSONUtil.toJsonPrettyStr(result);
+        }
 
         Path stdoutFile = null;
         Path stderrFile = null;

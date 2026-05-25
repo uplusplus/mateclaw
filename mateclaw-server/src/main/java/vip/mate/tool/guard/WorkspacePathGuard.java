@@ -9,6 +9,8 @@ import vip.mate.tool.builtin.ToolExecutionContext;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 工作区路径沙箱校验器
@@ -98,6 +100,119 @@ public final class WorkspacePathGuard {
             return null;
         }
         return Paths.get(basePath).toAbsolutePath().normalize();
+    }
+
+    /**
+     * Validate that a shell command does not reference filesystem locations
+     * outside the active workspace boundary. When no workspace basePath is
+     * configured, the check is a no-op (matching {@link #validatePath} semantics).
+     *
+     * <p>The check is a static scan of the literal command string. It rejects:
+     * <ul>
+     *   <li>any absolute path token (e.g. {@code /etc/passwd}, {@code >/tmp/x},
+     *       {@code cd /var}) whose normalized form is not under the workspace
+     *       root — even when nested inside command substitution {@code $(...)}
+     *       or backticks;</li>
+     *   <li>tilde expansion ({@code ~}, {@code ~/...}) — always resolves to
+     *       {@code $HOME}, which sits outside the workspace;</li>
+     *   <li>references to environment variables ({@code $HOME}, {@code ${USER}},
+     *       {@code $TMPDIR}, etc.) that typically resolve outside the workspace.</li>
+     * </ul>
+     *
+     * <p><b>Limitations</b> — the static scan is a best-effort defense, not a
+     * true filesystem sandbox. Obfuscated forms ({@code /e''tc/passwd},
+     * variable concatenation like {@code X=/etc; cat $X/passwd}, base64-decoded
+     * paths) can still slip through. The agent is not expected to produce
+     * such forms in normal use, but a fully adversarial caller would need a
+     * real process sandbox (sandbox-exec / firejail / bwrap) on top of this
+     * check.
+     *
+     * @param command the shell command line as it will be passed to {@code sh -c}
+     * @throws IllegalArgumentException when the command references a location
+     *         outside the workspace boundary
+     */
+    public static void validateShellCommand(String command) {
+        validateShellCommand(command, null);
+    }
+
+    /** ToolContext-aware overload — see {@link #validateShellCommand(String)}. */
+    public static void validateShellCommand(String command, @Nullable ToolContext ctx) {
+        if (command == null || command.isEmpty()) return;
+        String basePath = resolveBasePath(ctx);
+        if (basePath == null || basePath.isBlank()) return;
+        Path root = Paths.get(basePath).toAbsolutePath().normalize();
+
+        // 1. Tilde — expands to $HOME, always outside a non-$HOME workspace.
+        if (TILDE_REF.matcher(command).find()) {
+            throw new IllegalArgumentException(
+                    "Shell command uses tilde (~) expansion which resolves outside the workspace boundary: "
+                            + truncateForError(command));
+        }
+
+        // 2. Env-var refs to locations that typically resolve outside the workspace.
+        Matcher envMatch = OUTSIDE_ENV_VAR.matcher(command);
+        if (envMatch.find()) {
+            throw new IllegalArgumentException(
+                    "Shell command references environment variable " + envMatch.group()
+                            + " which may resolve outside the workspace boundary");
+        }
+
+        // 3. Absolute-path tokens, including those nested inside $(...) or `...`.
+        Matcher pathMatch = ABS_PATH_TOKEN.matcher(command);
+        while (pathMatch.find()) {
+            String candidate = pathMatch.group(1);
+            // Strip trailing punctuation that the shell would treat as a separator
+            // but the regex captured into the path (defensive trim — the character
+            // class excludes most, this catches edge cases like a path followed
+            // by a comma in a sentence).
+            while (candidate.length() > 1) {
+                char tail = candidate.charAt(candidate.length() - 1);
+                if (tail == ',' || tail == ':' || tail == '.' || tail == ')' || tail == ']') {
+                    candidate = candidate.substring(0, candidate.length() - 1);
+                } else {
+                    break;
+                }
+            }
+            Path normalized;
+            try {
+                normalized = Paths.get(candidate).normalize();
+            } catch (Exception ex) {
+                // Unparseable as a path — leave it alone, not our concern.
+                continue;
+            }
+            if (!normalized.startsWith(root)) {
+                throw new IllegalArgumentException(
+                        "Shell command references path outside workspace boundary: "
+                                + normalized + ", allowed root: " + root);
+            }
+        }
+    }
+
+    /**
+     * Match absolute path tokens — a leading slash that starts a fresh token
+     * (preceded by start-of-string, whitespace, a shell separator, or an
+     * opening quote/parenthesis/backtick) and runs until the next shell
+     * separator or quote. The {@code (?<!:)} lookbehind excludes the second
+     * slash of a URL protocol (e.g. {@code https://host/path}) so URLs aren't
+     * mistaken for filesystem paths.
+     */
+    private static final Pattern ABS_PATH_TOKEN = Pattern.compile(
+            "(?:^|[\\s|&;<>(`\"'={}])(?<!:)(/[^\\s|&;<>()\"'`{}=]+)");
+
+    /** Bare tilde or tilde at the start of a path token: {@code ~}, {@code ~/foo}, {@code "~/bar"}. */
+    private static final Pattern TILDE_REF = Pattern.compile(
+            "(?:^|[\\s|&;<>(`\"'={}])~(?=[/\\s|&;<>)`\"'$]|$)");
+
+    /**
+     * Env-var references that almost always point outside a project-scoped
+     * workspace. {@code $PATH} is on the list because writing to a directory
+     * on {@code $PATH} is a privilege-escalation vector.
+     */
+    private static final Pattern OUTSIDE_ENV_VAR = Pattern.compile(
+            "\\$\\{?(HOME|USER|LOGNAME|TMPDIR|TMP|TEMP|PWD|OLDPWD|PATH|MAIL)\\b");
+
+    private static String truncateForError(String s) {
+        return s.length() > 200 ? s.substring(0, 200) + "..." : s;
     }
 
     /**
