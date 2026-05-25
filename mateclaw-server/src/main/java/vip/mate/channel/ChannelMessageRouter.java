@@ -1017,8 +1017,9 @@ public class ChannelMessageRouter {
                 replayOrigin = chatOriginFactory.from(
                         channelEntity, triggerMessage, conversationId, /* workspaceBasePath */ null);
             }
-            String reply = agentService.chatWithReplay(
+            AgentService.ChatResult replayResult = agentService.chatWithReplayWithUsage(
                     agentId, replayPrompt, conversationId, consumed.getToolCallPayload(), replayOrigin);
+            String reply = replayResult.content();
 
             // Persist the replay result. If the LLM 400'd during replay,
             // the error reply must also get status='error' — otherwise the
@@ -1026,7 +1027,9 @@ public class ChannelMessageRouter {
             // into the prompt and re-trigger the same failure.
             boolean isError = errorClassifier.isErrorReply(reply);
             conversationService.saveMessage(conversationId, "assistant", reply, null,
-                    isError ? "error" : "completed");
+                    isError ? "error" : "completed",
+                    replayResult.promptTokens(), replayResult.completionTokens(),
+                    replayResult.runtimeModel(), replayResult.runtimeProvider());
 
             // 发送回复
             adapter.renderAndSend(replyTarget, reply);
