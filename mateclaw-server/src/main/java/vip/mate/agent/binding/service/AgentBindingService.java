@@ -584,6 +584,40 @@ public class AgentBindingService implements AgentBindingResolver {
     }
 
     /**
+     * Skill-discovery meta tools that let the LLM enumerate, load, read, or
+     * execute the workspace's skill catalog. Normally these live in
+     * {@link #SYSTEM_LEVEL_TOOLS} because every agent needs them — but when
+     * an agent has opted out of skills (issue #184), keeping them callable
+     * defeats the opt-out: the LLM can simply call {@code listAvailableSkills}
+     * to enumerate the catalog and {@code load_skill} to pull a SKILL.md
+     * into the conversation, even though the SKILL.md catalog itself was
+     * suppressed from the system prompt.
+     *
+     * <p>Resolved via {@link #getSkillDiscoveryDeniedTools} as a separate
+     * deny layer chained after the main allowlist, so the four-state matrix
+     * in {@link #getEffectiveToolNames} stays untouched.
+     */
+    private static final Set<String> SKILL_DISCOVERY_TOOLS = Set.of(
+            "listAvailableSkills",
+            "load_skill",
+            "readSkillFile",
+            "runSkillScript",
+            "listSkillFiles"
+    );
+
+    /**
+     * Tools the agent must NOT see when {@link AgentEntity#getSkillsDisabled()}
+     * is {@code true}. Empty otherwise. Chained on top of the allowlist by
+     * {@code AgentGraphBuilder} via {@code withDeniedToolsFiltered}.
+     */
+    public Set<String> getSkillDiscoveryDeniedTools(Long agentId) {
+        if (isSkillsDisabled(agentId)) {
+            return SKILL_DISCOVERY_TOOLS;
+        }
+        return Set.of();
+    }
+
+    /**
      * Tools that exist outside the skill scope and must survive any
      * agent-level skill binding restriction.
      *

@@ -645,4 +645,62 @@ class AgentBindingServiceTest {
         assertFalse(readToolsDisabledFlag(),
                 "单条 bindTool 也算明确的承诺，应当自动清掉 flag");
     }
+
+    // ==================== Issue #184 follow-up: skill-discovery deny ====================
+
+    @Test
+    @DisplayName("issue #184 follow-up: skills_disabled=true → 屏蔽 listAvailableSkills / load_skill / readSkillFile / runSkillScript / listSkillFiles")
+    void skillsDisabledDeniesAllSkillDiscoveryTools() {
+        // Verified during smoke test: even with skillsDisabled=true the LLM
+        // could call listAvailableSkills and discover the full catalog. The
+        // deny layer below subtracts the 5 skill-discovery tools so the opt-out
+        // is honored end-to-end, not just in the SKILL.md catalog injection.
+        setSkillsDisabledFlag(true);
+
+        Set<String> denied = bindingService.getSkillDiscoveryDeniedTools(agentId);
+        assertEquals(5, denied.size(), "应当返回 5 个 skill-discovery 工具名");
+        assertTrue(denied.contains("listAvailableSkills"));
+        assertTrue(denied.contains("load_skill"));
+        assertTrue(denied.contains("readSkillFile"));
+        assertTrue(denied.contains("runSkillScript"));
+        assertTrue(denied.contains("listSkillFiles"));
+    }
+
+    @Test
+    @DisplayName("issue #184 follow-up: skills_disabled=false → 不屏蔽任何工具（保留向后兼容）")
+    void skillsEnabledReturnsEmptyDenySet() {
+        // Default state — no flag, no rows. The deny layer must be a no-op
+        // so a legacy agent keeps every skill-discovery tool it had before.
+        Set<String> denied = bindingService.getSkillDiscoveryDeniedTools(agentId);
+        assertNotNull(denied);
+        assertTrue(denied.isEmpty(),
+                "skillsDisabled=false 时 deny 集必须为空，否则会误伤未禁用技能的 agent");
+    }
+
+    @Test
+    @DisplayName("issue #184 follow-up: setSkillBindings 非空时 auto-clear flag → deny 也回到空集")
+    void skillDiscoveryDenyTracksAutoClearOfFlag() {
+        // Auto-clear contract from the main PR: writing a non-empty binding
+        // clears skills_disabled. The deny set must follow — it reads the
+        // same flag at call time, so after auto-clear it should be empty.
+        long skillId = 7_777_901L;
+        seedSkill(skillId);
+        setSkillsDisabledFlag(true);
+        assertEquals(5, bindingService.getSkillDiscoveryDeniedTools(agentId).size(),
+                "前置：flag 开启时 deny 应为 5 个");
+
+        bindingService.setSkillBindings(agentId, List.of(skillId));
+
+        assertTrue(bindingService.getSkillDiscoveryDeniedTools(agentId).isEmpty(),
+                "auto-clear 后 deny 必须回到空集，否则用户重新绑定技能后仍然看不到 listAvailableSkills");
+    }
+
+    @Test
+    @DisplayName("issue #184 follow-up: missing agent → deny 空集（防御性）")
+    void skillDiscoveryDenyHandlesMissingAgent() {
+        Set<String> denied = bindingService.getSkillDiscoveryDeniedTools(999_999_999L);
+        assertNotNull(denied);
+        assertTrue(denied.isEmpty(),
+                "agent 不存在时 deny 集应为空 —— 严格但不抛错，与 isSkillsDisabled 的契约一致");
+    }
 }
