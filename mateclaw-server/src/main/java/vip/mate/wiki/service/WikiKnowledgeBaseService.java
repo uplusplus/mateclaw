@@ -138,6 +138,30 @@ public class WikiKnowledgeBaseService {
         return kbs.get(0);
     }
 
+    /**
+     * Resolve a specific knowledge base by name, restricted to the agent's
+     * visibility set (agent-bound KBs + shared NULL KBs). Used by wiki tools
+     * that accept an optional {@code kbName} parameter so the LLM can target
+     * a non-primary KB when the agent reaches more than one.
+     * <p>
+     * Match is exact and case-sensitive — the LLM is expected to copy the
+     * name verbatim from {@code wiki_list_kbs} output. Returns {@code null}
+     * when no visible KB has that name, so callers can surface a "use
+     * wiki_list_kbs to discover names" hint instead of silently falling back
+     * to the primary KB (which would mask a bad pick).
+     */
+    public WikiKnowledgeBaseEntity findByName(Long agentId, String kbName) {
+        if (kbName == null || kbName.isBlank()) {
+            return null;
+        }
+        for (WikiKnowledgeBaseEntity kb : listByAgentId(agentId)) {
+            if (kbName.equals(kb.getName())) {
+                return kb;
+            }
+        }
+        return null;
+    }
+
     public WikiKnowledgeBaseEntity getById(Long id) {
         return kbMapper.selectById(id);
     }

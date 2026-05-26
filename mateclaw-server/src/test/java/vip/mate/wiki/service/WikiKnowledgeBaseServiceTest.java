@@ -28,9 +28,14 @@ class WikiKnowledgeBaseServiceTest {
             kbMapper, null, null, null, null, null);
 
     private static WikiKnowledgeBaseEntity kb(long id, Long agentId) {
+        return kb(id, agentId, null);
+    }
+
+    private static WikiKnowledgeBaseEntity kb(long id, Long agentId, String name) {
         WikiKnowledgeBaseEntity entity = new WikiKnowledgeBaseEntity();
         entity.setId(id);
         entity.setAgentId(agentId);
+        entity.setName(name);
         return entity;
     }
 
@@ -63,5 +68,58 @@ class WikiKnowledgeBaseServiceTest {
         when(kbMapper.selectList(any())).thenReturn(List.of());
 
         assertThat(service.resolvePrimaryKb(7L)).isNull();
+    }
+
+    // ==================== findByName ====================
+    //
+    // The wiki tools added a kbName parameter so the LLM can target a
+    // non-primary KB. findByName is the resolution layer behind that
+    // parameter — it must restrict the match to KBs visible to the agent
+    // and refuse to silently fall through to the primary on a miss, so a
+    // bad pick surfaces as a clear "use wiki_list_kbs" hint instead of
+    // routing to the wrong KB.
+
+    @Test
+    @DisplayName("findByName matches by exact name within the agent's visible set")
+    void findByNameMatchesVisibleKb() {
+        when(kbMapper.selectList(any())).thenReturn(List.of(
+                kb(900L, null, "Shared Docs"),
+                kb(100L, 7L, "Agent Personal KB")));
+
+        WikiKnowledgeBaseEntity hit = service.findByName(7L, "Agent Personal KB");
+        assertThat(hit).isNotNull();
+        assertThat(hit.getId()).isEqualTo(100L);
+
+        WikiKnowledgeBaseEntity sharedHit = service.findByName(7L, "Shared Docs");
+        assertThat(sharedHit).isNotNull();
+        assertThat(sharedHit.getId()).isEqualTo(900L);
+    }
+
+    @Test
+    @DisplayName("findByName returns null when name does not match any visible KB")
+    void findByNameMissReturnsNull() {
+        when(kbMapper.selectList(any())).thenReturn(List.of(
+                kb(900L, null, "Shared Docs"),
+                kb(100L, 7L, "Agent Personal KB")));
+
+        assertThat(service.findByName(7L, "Nonexistent KB")).isNull();
+    }
+
+    @Test
+    @DisplayName("findByName is case-sensitive — LLM must copy the name verbatim")
+    void findByNameIsCaseSensitive() {
+        when(kbMapper.selectList(any())).thenReturn(List.of(
+                kb(100L, 7L, "Agent Personal KB")));
+
+        assertThat(service.findByName(7L, "agent personal kb")).isNull();
+        assertThat(service.findByName(7L, "Agent Personal KB")).isNotNull();
+    }
+
+    @Test
+    @DisplayName("findByName returns null for blank / null kbName")
+    void findByNameBlankReturnsNull() {
+        assertThat(service.findByName(7L, null)).isNull();
+        assertThat(service.findByName(7L, "")).isNull();
+        assertThat(service.findByName(7L, "   ")).isNull();
     }
 }

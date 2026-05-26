@@ -138,6 +138,16 @@ public class WikiContextService {
         int totalChars = 0;
         int maxChars = properties.getMaxContextChars();
 
+        // Every page is rendered under its KB heading so the agent can see
+        // which KB each slug lives in. This becomes load-bearing when more
+        // than one KB is visible: wiki tools accept an optional `kbName`
+        // argument, and the LLM is expected to copy the heading text into
+        // that argument when reaching for a slug outside the primary KB.
+        // Without the heading the agent would call wiki_read_page(slug=...)
+        // without kbName and silently miss the slug — that's the surface of
+        // issue #224 mapped into the prompt-side context.
+        boolean multipleKbs = kbs.size() > 1;
+
         for (WikiKnowledgeBaseEntity kb : kbs) {
             List<WikiPageEntity> pages = pageService.listSummaries(kb.getId());
             if (pages.isEmpty()) continue;
@@ -172,6 +182,13 @@ public class WikiContextService {
         }
 
         sb.append("Use wiki_read_page(slug) for details. Use wiki_search_pages(query) to search.\n");
+        if (multipleKbs) {
+            sb.append("Multiple knowledge bases visible — every wiki tool takes an optional ")
+                    .append("`kbName` argument (the heading text above). Pass it when the slug ")
+                    .append("you want lives outside the agent's primary KB; otherwise the tool ")
+                    .append("falls back to the primary and may return 'page not found'. Call ")
+                    .append("wiki_list_kbs first if unsure which KB to target.\n");
+        }
         sb.append("</wiki-context>");
 
         return sb.toString();
