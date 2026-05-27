@@ -84,6 +84,32 @@
           <el-icon><Select /></el-icon>
           {{ t('chat.approve') }}
         </button>
+        <!-- Always-approve dropdown — creates an auto-approve grant of the
+             selected scope before continuing with the regular /approve.
+             Workspace-wide grants are intentionally NOT exposed here; they
+             require the password-protected red button in Security >
+             自动批准策略. -->
+        <div class="approval-bar__always-wrap">
+          <button
+            type="button"
+            class="approval-bar__btn approval-bar__btn--always"
+            @click="alwaysApproveOpen = !alwaysApproveOpen"
+          >
+            {{ t('chat.approveAlways') }}
+            <el-icon><ArrowDown /></el-icon>
+          </button>
+          <div v-if="alwaysApproveOpen" class="approval-bar__menu">
+            <button type="button" class="approval-bar__menu-item" @click="chooseAlwaysApprove('CONVERSATION')">
+              {{ t('chat.approveAlwaysConversation') }}
+            </button>
+            <button type="button" class="approval-bar__menu-item" @click="chooseAlwaysApprove('AGENT')">
+              {{ t('chat.approveAlwaysAgent') }}
+            </button>
+            <button type="button" class="approval-bar__menu-item" @click="chooseAlwaysApprove('USER')">
+              {{ t('chat.approveAlwaysUser') }}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -204,7 +230,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { CloseBold, MagicStick, Microphone, Paperclip, Promotion, Select, Timer, WarningFilled } from '@element-plus/icons-vue'
+import { ArrowDown, CloseBold, MagicStick, Microphone, Paperclip, Promotion, Select, Timer, WarningFilled } from '@element-plus/icons-vue'
 import { useToolLabel } from '@/composables/useToolLabel'
 import type { ChatAttachment, PendingApprovalMeta, StreamPhase, QueuedMessage } from '@/types'
 
@@ -276,6 +302,14 @@ const emit = defineEmits<{
   'attachment-remove': [storedName: string]
   approve: [pendingId: string]
   deny: [pendingId: string]
+  /**
+   * Always-approve dropdown: ChatConsole creates an auto-approve grant for the
+   * matching scope, then forwards the regular /approve command. The scope
+   * vocabulary mirrors mate_approval_grant.scope_type minus WORKSPACE (the
+   * banner deliberately excludes the workspace-wide path; that lives in
+   * Security > 自动批准策略 with password confirmation).
+   */
+  'approve-always': [payload: { pendingId: string; scope: 'CONVERSATION' | 'AGENT' | 'USER' }]
   talk: []
   'toggle-thinking': []
 }>()
@@ -289,6 +323,15 @@ const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const isFocused = ref(false)
 const isComposing = ref(false)
+
+// Always-approve dropdown — collapsed by default; opens on the chevron click,
+// closes on outside click or after the user picks a scope.
+const alwaysApproveOpen = ref(false)
+function chooseAlwaysApprove(scope: 'CONVERSATION' | 'AGENT' | 'USER') {
+  if (!props.pendingApproval) return
+  emit('approve-always', { pendingId: props.pendingApproval.pendingId, scope })
+  alwaysApproveOpen.value = false
+}
 
 // 输入值处理
 const inputValue = computed({
@@ -755,6 +798,47 @@ defineExpose({
 
 .approval-bar__btn--approve:hover {
   background: var(--mc-primary-hover, #C1572B);
+}
+
+/* Always-approve dropdown: orange-red border to signal it's a security-reducing
+   action vs the regular approve button (solid primary). The dropdown menu is
+   absolutely positioned above the banner so it never gets clipped. */
+.approval-bar__always-wrap {
+  position: relative;
+}
+.approval-bar__btn--always {
+  background: transparent;
+  color: #b91c1c;
+  border: 1px solid #ef4444;
+}
+.approval-bar__btn--always:hover {
+  background: #fef2f2;
+}
+.approval-bar__menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  min-width: 160px;
+  background: var(--mc-surface-primary, #fff);
+  border: 1px solid var(--mc-border-light, #e5e7eb);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  z-index: 20;
+  overflow: hidden;
+}
+.approval-bar__menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  text-align: left;
+  font-size: 13px;
+  color: var(--mc-text-primary, #0f172a);
+  cursor: pointer;
+}
+.approval-bar__menu-item:hover {
+  background: var(--mc-surface-tertiary, #f1f5f9);
 }
 
 .approval-bar__btn--deny {

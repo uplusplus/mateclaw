@@ -1,5 +1,12 @@
 import axios from 'axios'
 import { handleAuthFailure, updateTokenFromHeader } from '@/utils/auth'
+import type {
+  ApprovalGrant,
+  ActiveGrantsSummary,
+  CreateGrantPayload,
+  ResolutionLog,
+  GrantScope,
+} from '@/types'
 
 // Axios 实例
 export const http = axios.create({
@@ -1274,4 +1281,43 @@ export const goalApi = {
   abandon: (id: string) => http.post<Goal>(`/goals/${id}/abandon`),
   addCriterion: (id: string, criterion: string) =>
     http.post<Goal>(`/goals/${id}/criteria`, { criterion }),
+}
+
+// ==================== Approval Auto-Grant ====================
+
+/**
+ * Client for the /api/v1/approval/* surface. The backend serializes all
+ * snowflake ids as strings (CLAUDE.md precision convention); callers should
+ * keep them as strings end-to-end and never run them through Number().
+ */
+export const approvalApi = {
+  /** List grants visible in the current workspace. mine=true skips the admin gate. */
+  listGrants: (params?: {
+    scopeType?: GrantScope
+    toolName?: string
+    revoked?: 0 | 1
+    mine?: boolean
+  }) => http.get<ApprovalGrant[]>('/approval/grants', { params }),
+
+  /** Active-grant summary used by the global chip + ChatInput pill counters. */
+  activeSummary: () =>
+    http.get<ActiveGrantsSummary>('/approval/grants/active'),
+
+  /** Create a grant. Returns the persisted row. */
+  createGrant: (payload: CreateGrantPayload) =>
+    http.post<ApprovalGrant>('/approval/grants', payload),
+
+  /** Soft-revoke a grant. Caller must be the grant owner OR a workspace admin. */
+  revokeGrant: (id: string) =>
+    http.delete<void>(`/approval/grants/${id}`),
+
+  /**
+   * Read approval-layer final decisions. {@code grantId} queries require admin;
+   * {@code conversationId} queries are visible to any workspace member.
+   */
+  listResolutions: (params: {
+    grantId?: string
+    conversationId?: string
+    limit?: number
+  }) => http.get<ResolutionLog[]>('/approval/resolutions', { params }),
 }

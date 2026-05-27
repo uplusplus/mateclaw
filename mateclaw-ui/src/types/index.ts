@@ -1019,3 +1019,75 @@ export interface CronJob {
   lastDeliveryStatus?: 'NONE' | 'PENDING' | 'DELIVERED' | 'NOT_DELIVERED'
   lastDeliveryError?: string | null
 }
+
+// ==================== Approval Auto-Grant ====================
+
+export type GrantScope = 'USER' | 'AGENT' | 'CONVERSATION' | 'WORKSPACE'
+export type GrantKind = 'ALWAYS' | 'UNTIL_TIMESTAMP' | 'UNTIL_CONVERSATION_END'
+export type GrantSeverity = 'LOW' | 'MEDIUM' | 'HIGH'
+export type ResolutionDecisionSource = 'USER_MANUAL' | 'AUTO_GRANT' | 'HARD_BLOCK' | 'TIMEOUT'
+
+/**
+ * A user-authorized rule that lets ApprovalGrantResolver skip the manual
+ * approval step for matching tool calls. All snowflake-typed fields are
+ * strings end-to-end per CLAUDE.md precision convention.
+ */
+export interface ApprovalGrant {
+  id: string
+  workspaceId: string
+  scopeType: GrantScope
+  scopeId: string
+  toolName: string | null
+  ruleId: string | null
+  maxSeverity: GrantSeverity
+  grantKind: GrantKind
+  expireAt: string | null
+  grantedBy: string
+  grantedAt: string
+  revoked: number
+  revokedBy: string | null
+  revokedAt: string | null
+  note: string | null
+}
+
+/** Active-grant summary for the global chip + ChatInput pill counters. */
+export interface ActiveGrantsSummary {
+  count: number
+  hasWorkspaceWide: boolean
+}
+
+/**
+ * Approval-layer final decision row. workspaceId can be null for HARD_BLOCK
+ * events that fired before workspace resolution.
+ */
+export interface ResolutionLog {
+  id: string
+  workspaceId: string | null
+  conversationId: string | null
+  agentId: string | null
+  userId: string | null
+  toolCallId: string | null
+  toolName: string
+  maxSeverity: GrantSeverity | null
+  ruleIds: string | null
+  decisionSource: ResolutionDecisionSource
+  grantId: string | null
+  pendingId: string | null
+  argsPreview: string | null
+  note: string | null
+  createTime: string
+}
+
+/** Payload for POST /approval/grants. */
+export interface CreateGrantPayload {
+  scopeType: GrantScope
+  scopeId: string
+  toolName?: string | null
+  ruleId?: string | null
+  maxSeverity: GrantSeverity
+  grantKind: GrantKind
+  expireAt?: string | null
+  note?: string | null
+  /** Required when scope+toolName combination is admin+password (see §2.4.5). */
+  password?: string
+}

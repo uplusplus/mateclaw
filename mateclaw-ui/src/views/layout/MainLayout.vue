@@ -133,6 +133,18 @@
             </button>
           </div>
 
+          <!-- Auto-approve chip — red on purpose: security-reducing setting needs
+               persistent visibility, not a friendly green badge. -->
+          <button
+            v-if="autoApproveSummary && autoApproveSummary.count > 0"
+            class="auto-approve-chip"
+            @click="goAutoApproveSettings"
+            :title="t('approval.grant.title')"
+          >
+            🔓
+            <span>{{ t('approval.grant.chipLabel', { count: autoApproveSummary.count }) }}</span>
+          </button>
+
           <div class="shortcuts-hint" :title="shortcutsHintText">
             <kbd>Ctrl+K</kbd>
             <span>{{ t('nav.shortcutAgents') }}</span>
@@ -197,7 +209,8 @@ import { useI18n } from 'vue-i18n'
 import { useThemeStore } from '@/stores/useThemeStore'
 import { version as appVersion } from '../../../package.json'
 import type { ThemeMode } from '@/stores/useThemeStore'
-import { http, settingsApi, setupApi } from '@/api/index'
+import { http, settingsApi, setupApi, approvalApi } from '@/api/index'
+import type { ActiveGrantsSummary } from '@/types'
 import OnboardingWizard from '@/views/Onboarding/OnboardingWizard.vue'
 import DoctorDrawer from '@/views/Doctor/DoctorDrawer.vue'
 import WorkspaceSwitcher from '@/components/workspace/WorkspaceSwitcher.vue'
@@ -235,6 +248,22 @@ async function fetchHealthStatus() {
   } catch {
     healthStatus.value = 'unknown'
   }
+}
+
+// Active auto-approve grants summary — drives the red "auto-approve active (N)"
+// chip in the sidebar footer. Red (not green) is intentional: this is a
+// security-reducing setting and the UI should keep reminding the user it's on.
+const autoApproveSummary = ref<ActiveGrantsSummary | null>(null)
+async function fetchAutoApproveSummary() {
+  try {
+    const res: any = await approvalApi.activeSummary()
+    autoApproveSummary.value = res?.data || res
+  } catch {
+    autoApproveSummary.value = null
+  }
+}
+function goAutoApproveSettings() {
+  router.push('/security/auto-approve')
 }
 
 // Sidebar attention signals — admin-only. Both `/agents` (stuck agents in the
@@ -323,6 +352,10 @@ onMounted(async () => {
 
   // Fetch initial health status for sidebar indicator
   fetchHealthStatus()
+  // Auto-approve chip count. Cheap query (single SELECT COUNT) so we just
+  // fetch on mount and on workspace switch (handled by router-view key change
+  // which re-mounts the route subtree).
+  fetchAutoApproveSummary()
   // Sidebar attention counts (live / security) are driven by
   // useNotificationCenter — it polls when admins are mounted.
 })
@@ -774,6 +807,23 @@ watch(() => workspaceStore.currentWorkspaceId, () => {
 }
 .health-indicator { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; border: 1px solid var(--mc-border-light); background: var(--mc-bg-muted); border-radius: 12px; cursor: pointer; color: var(--mc-text-secondary); font-size: 12px; margin-bottom: 8px; }
 .health-indicator:hover { background: var(--mc-bg-sunken); }
+
+/* Auto-approve chip — red border + red text, the persistent reminder that
+   this workspace currently has active auto-approve rules. Clicking takes
+   the user to Security > 自动批准策略 so they can review or revoke. */
+.auto-approve-chip {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; padding: 6px 10px;
+  border: 1px solid #ef4444;
+  background: #fef2f2;
+  color: #b91c1c;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.auto-approve-chip:hover { background: #fee2e2; }
 .health-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .health-indicator.healthy .health-dot { background: var(--mc-success); }
 .health-indicator.warning .health-dot { background: var(--mc-primary); }
