@@ -164,96 +164,137 @@
       />
     </div>
 
-    <!-- Create dialog -->
-    <el-dialog
-      v-model="dialogOpen"
-      :title="dialogWorkspaceWide ? t('approval.grant.createWorkspaceBtn') : t('approval.grant.createBtn')"
-      width="560px"
-      :close-on-click-modal="false"
-      destroy-on-close
-    >
-      <el-alert
-        v-if="dialogWorkspaceWide"
-        type="warning"
-        :closable="false"
-        show-icon
-        class="warning-banner"
-      >
-        {{ t('approval.grant.createWorkspaceWarning') }}
-      </el-alert>
-
-      <el-form :model="form" label-width="120px" class="grant-form">
-        <el-form-item :label="t('approval.grant.form.scopeType')">
-          <el-select v-model="form.scopeType" :disabled="dialogWorkspaceWide" style="width: 100%">
-            <el-option label="CONVERSATION" value="CONVERSATION" />
-            <el-option label="AGENT" value="AGENT" />
-            <el-option label="USER" value="USER" />
-            <el-option label="WORKSPACE" value="WORKSPACE" />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="t('approval.grant.form.scopeId')">
-          <el-input
-            v-model.trim="form.scopeId"
-            type="text"
-            inputmode="numeric"
-            pattern="\d*"
-            placeholder="snowflake id"
-          />
-        </el-form-item>
-        <el-form-item :label="t('approval.grant.form.toolName')">
-          <el-input v-model.trim="form.toolName" :disabled="dialogWorkspaceWide" />
-        </el-form-item>
-        <el-form-item :label="t('approval.grant.form.ruleId')">
-          <el-input v-model.trim="form.ruleId" placeholder="(optional)" />
-        </el-form-item>
-        <el-form-item :label="t('approval.grant.form.maxSeverity')">
-          <el-select v-model="form.maxSeverity" style="width: 100%">
-            <el-option label="LOW" value="LOW" />
-            <el-option label="MEDIUM" value="MEDIUM" />
-            <el-option label="HIGH" value="HIGH" />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="t('approval.grant.form.grantKind')">
-          <el-select v-model="form.grantKind" style="width: 100%">
-            <el-option :label="t('approval.grant.kind.always')" value="ALWAYS" />
-            <el-option :label="t('approval.grant.kind.until')" value="UNTIL_TIMESTAMP" />
-            <el-option :label="t('approval.grant.kind.conversationEnd')" value="UNTIL_CONVERSATION_END" />
-          </el-select>
-        </el-form-item>
-        <el-form-item
-          v-if="form.grantKind === 'UNTIL_TIMESTAMP'"
-          :label="t('approval.grant.form.expireAt')"
-        >
-          <el-date-picker
-            v-model="form.expireAt"
-            type="datetime"
-            style="width: 100%"
-            value-format="YYYY-MM-DDTHH:mm:ss"
-          />
-        </el-form-item>
-        <el-form-item :label="t('approval.grant.form.note')">
-          <el-input v-model.trim="form.note" />
-        </el-form-item>
-        <el-form-item
-          v-if="requiresPassword"
-          :label="t('approval.grant.form.password')"
-        >
-          <el-input
-            v-model="form.password"
-            type="password"
-            show-password
-            :prefix-icon="Lock"
-          />
-        </el-form-item>
-      </el-form>
-
-      <template #footer>
-        <el-button @click="dialogOpen = false">{{ t('common.cancel') }}</el-button>
-        <el-button type="primary" :loading="creating" @click="submitCreate">
-          {{ t('common.confirm') }}
-        </el-button>
-      </template>
-    </el-dialog>
+    <!--
+      Create dialog — matches the ToolGuard "edit rule" modal pattern:
+      Teleport to body + native .modal-overlay / .modal / .modal-header /
+      .modal-body / .modal-footer + .form-grid / .form-group / .form-input.
+      The workspace-wide path reuses the same modal with a red warning banner
+      at the top so the destructive variant looks identifiably different
+      from the routine create flow.
+    -->
+    <Teleport to="body">
+      <div v-if="dialogOpen" class="modal-overlay" @click.self="dialogOpen = false">
+        <div class="modal">
+          <div class="modal-header">
+            <h3>
+              <el-icon v-if="dialogWorkspaceWide" :size="18" class="modal-header__icon"><Unlock /></el-icon>
+              {{ dialogWorkspaceWide
+                  ? t('approval.grant.createWorkspaceBtn')
+                  : t('approval.grant.createBtn') }}
+            </h3>
+            <button class="modal-close" @click="dialogOpen = false">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div v-if="dialogWorkspaceWide" class="danger-banner">
+              <el-icon :size="16"><WarningFilled /></el-icon>
+              <span>{{ t('approval.grant.createWorkspaceWarning') }}</span>
+            </div>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>{{ t('approval.grant.form.scopeType') }} <span class="required">*</span></label>
+                <select
+                  v-model="form.scopeType"
+                  class="form-input"
+                  :disabled="dialogWorkspaceWide"
+                >
+                  <option value="CONVERSATION">CONVERSATION</option>
+                  <option value="AGENT">AGENT</option>
+                  <option value="USER">USER</option>
+                  <option value="WORKSPACE">WORKSPACE</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>{{ t('approval.grant.form.scopeId') }} <span class="required">*</span></label>
+                <input
+                  v-model.trim="form.scopeId"
+                  type="text"
+                  inputmode="numeric"
+                  pattern="\d*"
+                  placeholder="snowflake id"
+                  class="form-input"
+                />
+              </div>
+              <div class="form-group">
+                <label>{{ t('approval.grant.form.toolName') }}</label>
+                <input
+                  v-model.trim="form.toolName"
+                  class="form-input mono"
+                  :disabled="dialogWorkspaceWide"
+                  placeholder="(empty = any tool)"
+                />
+              </div>
+              <div class="form-group">
+                <label>{{ t('approval.grant.form.ruleId') }}</label>
+                <input
+                  v-model.trim="form.ruleId"
+                  class="form-input mono"
+                  placeholder="(optional)"
+                />
+              </div>
+              <div class="form-group">
+                <label>{{ t('approval.grant.form.maxSeverity') }}</label>
+                <select v-model="form.maxSeverity" class="form-input">
+                  <option value="LOW">LOW</option>
+                  <option value="MEDIUM">MEDIUM</option>
+                  <option value="HIGH">HIGH</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>{{ t('approval.grant.form.grantKind') }}</label>
+                <select v-model="form.grantKind" class="form-input">
+                  <option value="ALWAYS">{{ t('approval.grant.kind.always') }}</option>
+                  <option value="UNTIL_TIMESTAMP">{{ t('approval.grant.kind.until') }}</option>
+                  <option value="UNTIL_CONVERSATION_END">{{ t('approval.grant.kind.conversationEnd') }}</option>
+                </select>
+              </div>
+              <div v-if="form.grantKind === 'UNTIL_TIMESTAMP'" class="form-group">
+                <label>{{ t('approval.grant.form.expireAt') }} <span class="required">*</span></label>
+                <input
+                  v-model="form.expireAt"
+                  type="datetime-local"
+                  class="form-input"
+                />
+              </div>
+              <div class="form-group form-group--full">
+                <label>{{ t('approval.grant.form.note') }}</label>
+                <input
+                  v-model.trim="form.note"
+                  class="form-input"
+                  :placeholder="dialogWorkspaceWide ? '请说明为什么需要全工具白名单' : ''"
+                />
+              </div>
+              <div v-if="requiresPassword" class="form-group form-group--full">
+                <label>
+                  {{ t('approval.grant.form.password') }}
+                  <span class="required">*</span>
+                </label>
+                <div class="password-wrap">
+                  <el-icon :size="14" class="password-wrap__icon"><Lock /></el-icon>
+                  <input
+                    v-model="form.password"
+                    type="password"
+                    class="form-input form-input--with-icon"
+                    autocomplete="current-password"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn-secondary" @click="dialogOpen = false">
+              {{ t('common.cancel') }}
+            </button>
+            <button
+              class="btn-primary"
+              :disabled="creating"
+              @click="submitCreate"
+            >
+              {{ creating ? t('common.processing') : t('common.confirm') }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -268,6 +309,7 @@ import {
   Plus,
   Refresh,
   Unlock,
+  WarningFilled,
 } from '@element-plus/icons-vue'
 import { approvalApi } from '@/api'
 import type {
@@ -559,11 +601,145 @@ onMounted(loadGrants)
   justify-content: flex-end;
 }
 
-.warning-banner {
-  margin-bottom: 16px;
+/* ─── Modal (mirrors ToolGuard / edit-rule pattern) ──────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 24px;
+}
+.modal {
+  background: var(--mc-surface-primary, #fff);
+  border-radius: 12px;
+  width: min(640px, 100%);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--mc-border-light, #e5e7eb);
+}
+.modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--mc-text-primary, #0f172a);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.modal-header__icon {
+  color: var(--mc-danger, #b91c1c);
+}
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--mc-text-tertiary, #94a3b8);
+}
+.modal-close:hover { color: var(--mc-text-primary, #0f172a); }
+.modal-body {
+  padding: 20px;
+  overflow-y: auto;
+}
+.modal-footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--mc-border-light, #e5e7eb);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
-.grant-form {
-  padding-top: 4px;
+/* Danger banner inside the workspace-wide create modal — bright red so the
+   destructive variant looks instantly different from the routine flow. */
+.danger-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #991b1b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.danger-banner .el-icon { flex-shrink: 0; margin-top: 1px; }
+
+/* Form grid layout — two columns on wide modal, one column when narrow.
+   form-group--full breaks across both columns (note, password). */
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 16px;
+}
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.form-group--full { grid-column: 1 / -1; }
+.form-group label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--mc-text-secondary, #475569);
+}
+.form-group label .required {
+  color: var(--mc-danger, #b91c1c);
+  margin-left: 2px;
+}
+.form-input {
+  padding: 8px 10px;
+  border: 1px solid var(--mc-border-light, #e5e7eb);
+  border-radius: 6px;
+  background: var(--mc-surface-primary, #fff);
+  color: var(--mc-text-primary, #0f172a);
+  font-size: 13px;
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.form-input:focus {
+  outline: none;
+  border-color: var(--mc-primary, #d97757);
+}
+.form-input:disabled {
+  background: var(--mc-surface-tertiary, #f1f5f9);
+  cursor: not-allowed;
+}
+.form-input.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+/* Password input with the Lock icon as a visual prefix. */
+.password-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.password-wrap__icon {
+  position: absolute;
+  left: 10px;
+  color: var(--mc-text-tertiary, #94a3b8);
+  pointer-events: none;
+}
+.form-input--with-icon { padding-left: 32px; }
+
+@media (max-width: 560px) {
+  .form-grid { grid-template-columns: 1fr; }
 }
 </style>
