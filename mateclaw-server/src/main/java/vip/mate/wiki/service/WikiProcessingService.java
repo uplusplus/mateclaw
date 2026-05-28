@@ -2,6 +2,7 @@ package vip.mate.wiki.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -52,6 +53,7 @@ public class WikiProcessingService {
     private final WikiPageService pageService;
     private final WikiChunkService chunkService;
     private final WikiEmbeddingService embeddingService;
+    private final WikiLinkService linkService;
     private final WikiProperties properties;
     private final ModelConfigService modelConfigService;
     private final AgentGraphBuilder agentGraphBuilder;
@@ -801,9 +803,7 @@ public class WikiProcessingService {
 
         String routeSystem = PromptLoader.loadPrompt("wiki/route-system");
         String routeUserTemplate = PromptLoader.loadPrompt("wiki/route-user");
-        String documentMapSection = (documentMap != null && !documentMap.isBlank())
-                ? "## 文档全局概念地图（预分析结果，供路由参考）\n\n```json\n" + documentMap + "\n```\n"
-                : "";
+        String documentMapSection = buildDocumentMapSection(documentMap);
         String routeUser = routeUserTemplate
                 .replace("{config}", configContent)
                 .replace("{document_map_section}", documentMapSection)
@@ -1066,9 +1066,7 @@ public class WikiProcessingService {
 
             String batchSystem = PromptLoader.loadPrompt("wiki/batch-create-system");
             String batchUserTemplate = PromptLoader.loadPrompt("wiki/batch-create-user");
-            String docMapSection = (documentMap != null && !documentMap.isBlank())
-                    ? "## 文档全局概念地图（预分析结果，供页面内容生成参考）\n\n```json\n" + documentMap + "\n```\n"
-                    : "";
+            String docMapSection = buildDocumentMapSection(documentMap);
             String batchUser = batchUserTemplate
                     .replace("{config}", configContent)
                     .replace("{document_map_section}", docMapSection)
@@ -1594,10 +1592,16 @@ public class WikiProcessingService {
         String sample = textContent.length() > sampleChars
                 ? textContent.substring(0, sampleChars) + "\n...[文档较长，以上为节选]"
                 : textContent;
+        // Inject the existing-pages index so the LLM can pick a real `related_pages`
+        // whitelist of slugs that already exist in the KB. Generation prompts
+        // downstream see the validated whitelist via `documentMap`, which lets
+        // them link confidently instead of inventing targets.
+        String existingPagesIndex = buildExistingPagesIndex(kb.getId());
         String system = PromptLoader.loadPrompt("wiki/analyze-system");
         String userTemplate = PromptLoader.loadPrompt("wiki/analyze-user");
         String user = userTemplate
                 .replace("{raw_title}", raw.getTitle())
+                .replace("{existing_pages}", existingPagesIndex)
                 .replace("{text_sample}", sample);
         Prompt prompt = new Prompt(List.of(
                 new SystemMessage(system),
@@ -1609,16 +1613,102 @@ public class WikiProcessingService {
                     kb.getId(), vip.mate.wiki.job.WikiJobStep.ROUTE);
             JsonNode json = parseJsonResponse(response);
             if (json != null) {
-                log.info("[Wiki] Document analysis done for raw={}: topics={}, concepts={}",
+                // Validate related_pages against the active KB slug set BEFORE
+                // letting it flow downstream. An LLM that ignores the "must
+                // come from the index" rule and invents slugs would otherwise
+                // pollute the generation prompt, undoing the work of Phase 3.
+                JsonNode validated = validateRelatedPages(kb.getId(), json);
+                log.info("[Wiki] Document analysis done for raw={}: topics={}, concepts={}, related_pages={}",
                         raw.getId(),
-                        json.path("topics").size(),
-                        json.path("key_concepts").size());
-                return json.toPrettyString();
+                        validated.path("topics").size(),
+                        validated.path("key_concepts").size(),
+                        validated.path("related_pages").size());
+                return validated.toPrettyString();
             }
         } catch (Exception e) {
             log.warn("[Wiki] Document analysis failed for raw={}, continuing without: {}", raw.getId(), e.getMessage());
         }
         return "";
+    }
+
+    /**
+     * Render the analyze-stage output for inclusion in route / batch-create
+     * user prompts. The full JSON goes into a fenced code block, and any
+     * {@code related_pages} array is also surfaced as a plain "recommended
+     * link targets" section right above it so the LLM doesn't have to
+     * parse JSON to find the whitelist.
+     */
+    private String buildDocumentMapSection(String documentMap) {
+        if (documentMap == null || documentMap.isBlank()) return "";
+        StringBuilder sb = new StringBuilder();
+        try {
+            JsonNode node = objectMapper.readTree(documentMap);
+            JsonNode related = node.path("related_pages");
+            if (related.isArray() && related.size() > 0) {
+                sb.append("## 推荐链接到的页面（由分析阶段产出，已通过 slug 白名单校验，可优先使用）\n\n");
+                for (JsonNode el : related) {
+                    String slug = el.asText("").trim();
+                    if (slug.isEmpty()) continue;
+                    sb.append("- [[").append(slug).append("]]\n");
+                }
+                sb.append("\n");
+            }
+        } catch (Exception ignored) {
+            // documentMap might not be parseable JSON (older runs, partial
+            // output) — fall through and emit the raw block below.
+        }
+        sb.append("## 文档全局概念地图（预分析结果，供页面内容生成参考）\n\n```json\n")
+                .append(documentMap).append("\n```\n");
+        return sb.toString();
+    }
+
+    /**
+     * Drop any {@code related_pages} entry not in the KB's active slug set.
+     * <p>
+     * The analyze-stage system prompt explicitly tells the LLM that every
+     * entry must come from the supplied index, but production LLMs are not
+     * 100% reliable on negative constraints. This server-side validator is
+     * the contract enforcement: invalid entries are silently dropped (with
+     * a single warning log per analyze call, batched), so the downstream
+     * generation prompt never sees an invented slug masquerading as a
+     * curated whitelist.
+     */
+    private JsonNode validateRelatedPages(Long kbId, JsonNode analysisJson) {
+        JsonNode relatedNode = analysisJson.path("related_pages");
+        if (!relatedNode.isArray() || relatedNode.size() == 0) return analysisJson;
+
+        java.util.Set<String> activeSlugs;
+        try {
+            activeSlugs = linkService.lowercaseSlugSet(pageService.listSummaries(kbId));
+        } catch (RuntimeException e) {
+            // Without a slug set, no validation is possible. Drop the whole
+            // related_pages array — better than passing through unvalidated
+            // suggestions that could be hallucinated.
+            log.warn("[Wiki] Cannot validate related_pages for kbId={}, dropping array: {}",
+                    kbId, e.toString());
+            ObjectNode result = analysisJson.deepCopy();
+            result.putArray("related_pages");
+            return result;
+        }
+
+        com.fasterxml.jackson.databind.node.ArrayNode keptArray = objectMapper.createArrayNode();
+        java.util.List<String> dropped = new java.util.ArrayList<>();
+        for (JsonNode el : relatedNode) {
+            String slug = el.asText("").trim();
+            if (slug.isEmpty()) continue;
+            if (activeSlugs.contains(slug.toLowerCase(java.util.Locale.ROOT))) {
+                keptArray.add(slug);
+            } else {
+                dropped.add(slug);
+            }
+        }
+        if (!dropped.isEmpty()) {
+            log.warn("[Wiki] Analyze dropped {} hallucinated related_pages entries for kbId={}: {}",
+                    dropped.size(), kbId, dropped);
+        }
+        ObjectNode result = analysisJson.deepCopy();
+        result.set("related_pages", keptArray);
+        return result;
     }
 
     /**
