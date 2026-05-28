@@ -475,3 +475,56 @@ not null content/summary" is worth adding in a separate PR — would have
 caught this class of bug at the boundary between MyBatis-Plus field
 strategy and partial-entity update calls. Tracked.
 
+---
+
+## 9. Third pass — post-fix, post-restart full sweep (2026-05-28)
+
+Server restarted with commit `897cfbdf` (the FieldStrategy.ALWAYS fix).
+Fresh KB `E2E-RFC55-Final` (id `2059783943071645697`). Comprehensive
+re-run of every Phase 1-5 contract plus the regression guard.
+
+| Section | Result | Evidence |
+|---|---|---|
+| §1 refs shape on fresh KB | ✅ | `{kbId, items:[{slug,title,archived:bool}]}` for the 2 auto-seeded system pages |
+| §2 sync `broken_links` on PUT | ✅ | content_len=66, summary="sync-test summary", outgoing=`["ghost-page","also-fake","log"]`, broken=`["ghost-page","also-fake"]`, scannedAt populated — all in one PUT |
+| **§3 REGRESSION GUARD** — scan x5 must not null content/summary | ✅ | Captured content + summary BEFORE; ran `POST /lint/broken-links` five times in a row; captured AFTER. `[[ $BEFORE == $AFTER ]]` returned true; content sha1 stable at `a87424e5a189c773113860c715a60b071103b550` |
+| §4 ingest 2-page source | ✅ | 5 entity pages generated (alice, bob, search-team, mentorship + existing overview/log); content_len 522/509, summary populated, outgoing `["bob"]`/`["alice"]`, all slug-form, no broken |
+| §5 cascade DELETE alice — bob's summary preserved | ✅ | bob.content 1125 → 1095 chars (3 `[[alice]]` → `Alice` shrink, expected); bob.summary string identical; bob.outgoing emptied. Audit `affectedPageIds=[bob, search-team, mentorship]` (3 referrers, not just the obvious one) |
+| §6 cascade RENAME bob → robert — referrer summaries preserved | ✅ | search-team: content_len=1483, summary_len=241, 0 `[[bob]]`, 2 `[[robert]]`. mentorship: content_len=1464, summary_len=218, 0 `[[bob]]`, 2 `[[robert]]`. Old slug → HTTP 404, new slug reachable. Audit `affectedPageIds=[search-team_id, mentorship_id]` |
+| §7 break-then-fix round trip | ✅ | PUT with `[[gone-1]] [[gone-2]] [[robert]]` → outgoing=3, broken=2 sync. Fix PUT with only valid → outgoing=1, broken=0 sync |
+| §8 archive interaction | ✅ | Archive mentorship → default refs lists 4 pages (no mentorship); `?includeArchived=true` lists 5 pages with mentorship `archived=true` and others `archived=false` |
+| §9 **code-block protection during cascade DELETE** | ✅ | Seeded overview with 2× prose `[[robert]]` + 1× fenced `[[robert]]` + 1× inline `` `[[robert]]` ``. Save-time `outgoing=["robert"]` (code-block occurrences excluded by extractOutlinks). After `DELETE /pages/robert`: prose `[[robert]]`/`[[robert\|Robert]]` demoted to plain `Bob`/`Robert` (alias preserved); fenced block byte-identical (`Use [[robert]] for the link.` literal); inline code byte-identical (`` `[[robert]]` ``). outgoing=`[]`, broken=`[]` |
+
+### 9.1 Final content for §9 (proof of code-block byte-identity)
+
+```
+## Code-block test
+
+Prose refers to Bob and Robert.
+
+Code example:
+
+​```
+Use [[robert]] for the link.
+​```
+
+Inline: `[[robert]]` is the form.
+```
+
+The two `[[robert]]` references inside the fenced block and the inline
+backticks survived the cascade delete unchanged; the two prose
+references became plain text using the snapshot title (`Bob`) and the
+preserved alias (`Robert`). Same content-block-protection guarantee
+the unit tests pin down, now reproduced on a live server with real
+HTTP traffic.
+
+### 9.2 Bottom line
+
+All 9 e2e sections pass on the restarted server with the cascade +
+scan write-path fix in place. The bug class that the §8 incident
+exposed (partial-entity update + FieldStrategy.ALWAYS = silent column
+null-out) has no live recurrence. The data shape, the audit trail, the
+HTTP status semantics, and the user-visible UX flows ("break a link,
+see it in lint, fix it, see it cleared") are all reproducible on a
+clean dev box in roughly two minutes.
+
