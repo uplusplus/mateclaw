@@ -720,3 +720,103 @@ dev box. 14 + 3 + 9 + 14 + 5 + 4 = 49 documented assertions across
 five distinct phases of validation. No open defects; both follow-ups
 shipped and live-verified.
 
+---
+
+## 13. Sixth pass — chat-side wikilink navigation (2026-05-28)
+
+User reported during a live wiki UI session that wikilinks rendered
+inside chat messages (where the agent quoted wiki page content via
+`wiki_read_page`) **looked clickable but did nothing**. Investigation
+showed the legacy `renderMarkdown` path emits
+`<a class="wiki-link" href="#" data-wiki-title="..." onclick="...">`
+but:
+
+1. DOMPurify strips the inline `onclick` (correct best practice).
+2. The remaining `href="#"` is a no-op anchor.
+3. The `wiki-link-click` custom event the renderer's `onclick` would
+   have dispatched has **no listener anywhere in the codebase** — so
+   even if the inline handler survived, nothing would have consumed it.
+4. `WikiPageViewer`'s document-level click handler only fires when the
+   anchor carries `data-slug`; chat-side anchors only carry
+   `data-wiki-title`, so the viewer's handler skipped them silently.
+
+Net effect: every wikilink in chat (and any other non-wiki-view
+surface using `renderMarkdown`'s default `'legacy'` mode) had been
+dead since the codebase shipped that path. Not a regression from
+this RFC — a pre-existing miss that the RFC's chat-as-bystander
+philosophy left in place.
+
+### 13.1 Fix design
+
+Cross-KB lookup + global click delegator + query-param auto-open:
+
+- **`GET /api/v1/wiki/pages/lookup?title=X&slug=Y`** — searches every
+  KB visible to the user's workspace, returns
+  `[{kbId, kbName, slug, title, archived}]`. Slug match wins; title
+  match is a fallback. Case-insensitive exact only (no canonical
+  fuzzing, matching the §2 lint rule).
+- **`useGlobalWikilinkClick`** — composable mounted in `App.vue`.
+  Document-level click delegator that:
+  - Matches `<a class="wiki-link">` carrying `data-wiki-title` (chat
+    anchors). Skips anchors with `data-slug` (those are the wiki
+    page viewer's own postprocess output; its existing handler
+    keeps owning them).
+  - Calls lookup, then routes:
+    - 0 hits → `mcToast.info("未找到匹配的 wiki 页面：<title>")`
+    - 1 hit → `router.push({ name: 'Wiki', query: { kbId, slug } })`
+    - >1 hits → `mcConfirm` picker offering to open the first match
+- **`Wiki/index.vue`** — on mount and on `route.query` change, if
+  `?kbId=X&slug=Y` are present, calls `selectKB(kbId)` then
+  `loadPage(kbId, slug)`, then `router.replace({name:'Wiki'})` to
+  drop the query (so reload doesn't re-open the page).
+
+### 13.2 Live verification
+
+Seeded `E2E-LookupDemo` KB with two pages (`stategraph`, `react-mode`)
+via a tiny ingest. Probed the new endpoint:
+
+| Query | Match count | First hit |
+|---|---|---|
+| `title=` (empty) and `slug=` (empty) | 0 | (early-return) |
+| `title=Overview` (every KB auto-seeds it) | 2 (across visible KBs) | `kbId=E2E-RFC55-PostFix, slug=overview` |
+| `slug=overview` | 2 | same |
+| `slug=OVERVIEW` (uppercase) | 2 | same — confirms case-insensitive |
+| `slug=does-not-exist` | 0 | — |
+| `title=StateGraph` | 1 | `kbId=E2E-LookupDemo, slug=stategraph, title=StateGraph` |
+| `title=stategraph` | 1 | same — title field matches `stategraph` lowercased against the stored "StateGraph" |
+| `title=ReAct` | 0 | LLM-generated slug was `react-mode` / title `ReAct Mode`, exact match fails — toast path exercised |
+
+Notes:
+- The endpoint returns a JSON envelope `{code:200, msg:"操作成功", data:[...]}`
+  matching every other wiki endpoint. The frontend composable handles
+  both `res.data` and bare `res` shapes for robustness.
+- Snowflake `kbId` correctly serialised as string (matches the
+  CLAUDE.md ID handling contract).
+- KB visibility scope respected — only KBs in the requesting
+  workspace appear in the result set, never cross-workspace.
+
+### 13.3 What the user will observe
+
+After this change, the user's original screenshot scenario plays out
+as: clicking `[[StateGraph]]` in the chat bubble triggers
+`useGlobalWikilinkClick.handleClick` → lookup → one match in their
+KB → router navigates to wiki view with the right KB selected and
+the StateGraph page open. The `[[ReAct]]` link gets a toast
+"未找到匹配的 wiki 页面：ReAct" because the actual page title is
+"ReAct Mode" (the LLM picked a different slug/title than the raw
+`[[ReAct]]` token). The toast tells the user the link points at a
+non-existent target, which they can then either edit out or rename
+the target page to match.
+
+### 13.4 Frontend test impact
+
+- 22 vitest tests still pass.
+- `pnpm vue-tsc --noEmit`: 0 errors.
+- `pnpm build`: builds successfully.
+
+### 13.5 Bottom line for §13
+
+Closes the "wikilinks in chat are dead" gap the RFC implicitly left
+open. Net change: 1 backend endpoint, 1 new frontend composable,
+3-line edits in `App.vue` / `api/index.ts` / `Wiki/index.vue`.
+

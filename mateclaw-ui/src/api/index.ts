@@ -811,6 +811,12 @@ export const wikiApi = {
   getBacklinks: (kbId: number, slug: string) =>
     http.get(`/wiki/knowledge-bases/${kbId}/pages/${encodeURIComponent(slug)}/backlinks`),
 
+  // Cross-KB lookup used by the global wikilink click handler — chat
+  // messages render [[Title]] without knowing which KB the agent read
+  // from, so the handler resolves the title across every visible KB.
+  lookupPage: (params: { title?: string; slug?: string }) =>
+    http.get(`/wiki/pages/lookup`, { params }),
+
   // Archived pages
   listArchivedPages: (kbId: number) =>
     http.get(`/wiki/knowledge-bases/${kbId}/pages/archived`),

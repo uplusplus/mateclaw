@@ -508,6 +508,65 @@ public class WikiController {
         return R.ok(deleted);
     }
 
+    /**
+     * Cross-KB page lookup by title or slug, scoped to the requesting user's
+     * workspace. Used by the global wikilink click delegator: when a user
+     * clicks a {@code [[Title]]} reference inside a chat message, the
+     * frontend has no idea which KB the wiki tool read from, so this
+     * endpoint searches every KB visible to the user and returns the
+     * candidates.
+     * <p>
+     * Lookup precedence:
+     * <ul>
+     *   <li>If {@code slug} is provided, match against {@code page.slug}
+     *       (case-insensitive exact).</li>
+     *   <li>Else if {@code title} is provided, match against
+     *       {@code page.title} (case-insensitive exact, trimmed).</li>
+     * </ul>
+     * Returns {@code []} if neither parameter is supplied or no match is
+     * found in any visible KB.
+     */
+    @RequireWorkspaceRole("viewer")
+    @Operation(summary = "跨 KB 按 title 或 slug 查找页面（chat 端 wikilink 跳转用）")
+    @GetMapping("/pages/lookup")
+    public R<List<Map<String, Object>>> lookupPages(
+            @RequestParam(required = false) String title,
+            @RequestParam(required = false) String slug,
+            @RequestHeader(value = "X-Workspace-Id", required = false) Long workspaceId) {
+        long wsId = workspaceId != null ? workspaceId : 1L;
+        List<Map<String, Object>> matches = new java.util.ArrayList<>();
+        if ((title == null || title.isBlank()) && (slug == null || slug.isBlank())) {
+            return R.ok(matches);
+        }
+        String slugLower = slug != null ? slug.trim().toLowerCase(java.util.Locale.ROOT) : null;
+        String titleLower = title != null ? title.trim().toLowerCase(java.util.Locale.ROOT) : null;
+
+        for (WikiKnowledgeBaseEntity kb : kbService.listByWorkspace(wsId)) {
+            // listSummaries excludes archived; that's what we want for the
+            // chat-click navigation contract (clicking a [[link]] should
+            // take the user to an active page, not a tombstone).
+            for (WikiPageEntity p : pageService.listSummaries(kb.getId())) {
+                boolean hit = false;
+                if (slugLower != null && p.getSlug() != null
+                        && p.getSlug().toLowerCase(java.util.Locale.ROOT).equals(slugLower)) {
+                    hit = true;
+                } else if (titleLower != null && p.getTitle() != null
+                        && p.getTitle().trim().toLowerCase(java.util.Locale.ROOT).equals(titleLower)) {
+                    hit = true;
+                }
+                if (!hit) continue;
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("kbId", String.valueOf(kb.getId()));
+                row.put("kbName", kb.getName());
+                row.put("slug", p.getSlug());
+                row.put("title", p.getTitle());
+                row.put("archived", false);
+                matches.add(row);
+            }
+        }
+        return R.ok(matches);
+    }
+
     @RequireWorkspaceRole("viewer")
     @Operation(summary = "获取反向链接")
     @GetMapping("/knowledge-bases/{kbId}/pages/{slug}/backlinks")

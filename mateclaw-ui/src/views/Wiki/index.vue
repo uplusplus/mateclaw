@@ -41,12 +41,16 @@
 <script setup lang="ts">
 import { ref, reactive, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import { useWikiStore, type WikiKB } from '@/stores/useWikiStore'
 import { wikiApi } from '@/api/index'
 import { mcConfirm } from '@/components/common/useConfirm'
 import { mcToast } from '@/composables/useMcToast'
 import WikiLibrary from './components/WikiLibrary.vue'
 import WikiWorkspace from './components/WikiWorkspace.vue'
+
+const route = useRoute()
+const router = useRouter()
 
 const { t } = useI18n()
 const store = useWikiStore()
@@ -108,9 +112,37 @@ async function handleDeleteKB(kb: WikiKB) {
   }
 }
 
-onMounted(() => {
-  store.fetchKnowledgeBases()
+async function consumeQueryNavigation() {
+  // Global wikilink click delegator (see App.vue) pushes us with
+  // ?kbId=X&slug=Y on click. Honour both: enter the KB then surface
+  // the page directly. Strips the query immediately so a manual reload
+  // doesn't keep re-opening the same page.
+  const kbIdRaw = route.query.kbId
+  const slugRaw = route.query.slug
+  if (typeof kbIdRaw !== 'string' || typeof slugRaw !== 'string') return
+  // Snowflake stays as a string end-to-end — store.selectKB accepts number,
+  // so we coerce only at the call site (safe because Pinia stores routes
+  // through to the backend as a string in the URL path).
+  const kbIdNum = Number(kbIdRaw)
+  if (!Number.isFinite(kbIdNum)) return
+  await store.selectKB(kbIdNum)
+  try {
+    await store.loadPage(kbIdNum, slugRaw)
+  } catch (e) {
+    console.warn('[Wiki] auto-open page failed', e)
+  }
+  // Drop the query so back-button + reload behave sanely.
+  router.replace({ name: 'Wiki' })
+}
+
+onMounted(async () => {
+  await store.fetchKnowledgeBases()
+  await consumeQueryNavigation()
 })
+
+// Re-consume the query when a click delegator navigates while we're
+// already on /wiki (route.path unchanged, query changed).
+watch(() => route.query, () => { consumeQueryNavigation() })
 </script>
 
 <style scoped>
