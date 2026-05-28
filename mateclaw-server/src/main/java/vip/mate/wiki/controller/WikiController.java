@@ -546,16 +546,47 @@ public class WikiController {
         long pending = rawList.stream().filter(r -> "pending".equals(r.getProcessingStatus())).count();
         long processing = rawList.stream().filter(r -> "processing".equals(r.getProcessingStatus())).count();
         long completed = rawList.stream().filter(r -> "completed".equals(r.getProcessingStatus())).count();
+        long partial = rawList.stream().filter(r -> "partial".equals(r.getProcessingStatus())).count();
         long failed = rawList.stream().filter(r -> "failed".equals(r.getProcessingStatus())).count();
+        long cancelled = rawList.stream().filter(r -> "cancelled".equals(r.getProcessingStatus())).count();
+
+        // Derive totalPages from the real `mate_wiki_page` table rather than
+        // `kb.pageCount`, which can lag behind if a processing run aborts
+        // between page creation and the page-count refresh. Using the live
+        // count keeps the UI honest even when the bookkeeping field is stale.
+        int realPageCount = pageService.countByKbId(kbId);
+        // Self-heal: if the stored pageCount drifted from the real count,
+        // quietly fix it so downstream callers reading `kb.pageCount` see
+        // the truth too. This is the cheapest place to repair without
+        // disrupting the in-flight processing path.
+        if (kb.getPageCount() == null || kb.getPageCount() != realPageCount) {
+            try {
+                kbService.setPageCount(kbId, realPageCount);
+            } catch (Exception ignore) {
+                // Self-heal is best-effort; never let it fail the status read.
+            }
+        }
+
+        // KB-level status field reflects whether the heavy pipeline is still
+        // running; once it flips back to "active" no raw material is actually
+        // mid-processing, regardless of any row whose `processing_status`
+        // didn't get its terminal-state update (a known failure mode in
+        // long-running ingest paths). Override the per-raw count so the UI
+        // doesn't show "processing" forever after the KB itself is idle.
+        boolean kbIdle = !"processing".equals(kb.getStatus());
+        long effectiveProcessing = kbIdle ? 0 : processing;
+        long inferredCompleted = kbIdle ? (completed + (realPageCount > 0 ? processing : 0)) : completed;
 
         return R.ok(Map.of(
                 "status", kb.getStatus(),
                 "pending", pending,
-                "processing", processing,
-                "completed", completed,
+                "processing", effectiveProcessing,
+                "completed", inferredCompleted,
+                "partial", partial,
                 "failed", failed,
+                "cancelled", cancelled,
                 "totalRaw", rawList.size(),
-                "totalPages", kb.getPageCount()
+                "totalPages", realPageCount
         ));
     }
 
