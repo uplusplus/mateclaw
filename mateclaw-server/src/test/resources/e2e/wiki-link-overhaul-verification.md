@@ -528,3 +528,74 @@ HTTP status semantics, and the user-visible UX flows ("break a link,
 see it in lint, fix it, see it cleared") are all reproducible on a
 clean dev box in roughly two minutes.
 
+---
+
+## 10. Fourth pass — edge cases and negative paths (2026-05-28)
+
+Targeted run focused on inputs that the Phase 1-5 contracts don't make
+loud claims about: self-links, dedup, case folding, malformed wikilink
+syntax, oversize slugs, archived targets, idempotent deletes, batch
+delete, markdown-link confusables, scan perf on a real 31-page KB. Each
+row records the actual response shape so future contributors can see
+the exact behaviour the contract permits.
+
+| Code | Scenario | Result | Notes |
+|---|---|---|---|
+| A | Self-link: `[[overview]]` in `overview` itself | ✅ | outgoing=`["overview"]`, broken=`[]`. The "include self-slug in active set" branch in `applyLinkAnalysis` works as designed |
+| B | Dedup: `[[ghost]] [[ghost]] [[ghost\|a1]] [[ghost\|a2]]` | ✅ | outgoing=`["ghost"]` (4 occurrences → 1 entry), broken=`["ghost"]` |
+| C | Case-insensitive resolution: `[[OVERVIEW]] [[Overview]] [[overview]]` | ✅ | outgoing=`["overview"]` (3 → 1, lowercased), broken=`[]` |
+| D | Empty/whitespace targets: `[[]] [[ ]] [[\t]] [[\|alias]]` mixed with `[[overview]]` | ✅ | outgoing=`["overview"]` only; empty/whitespace/empty-target-with-pipe all skipped |
+| E | Batch delete `["team"]` | ✅ | Returns `data: 1` (count); page gone from refs |
+| F | Idempotent delete (same slug twice) | ✅ | Both returns `code:200 操作成功`; service treats missing as no-op |
+| G | Case-only rename `alpha → ALPHA` on H2 | ⚠️ Behaviour | Allowed (case-sensitive collation); after rename, `GET /pages/ALPHA` → 200, `GET /pages/alpha` → 404. **Portability concern**: on MySQL with `utf8mb4_unicode_ci` (default), `getBySlug("ALPHA")` would return the existing `alpha` row, the collision-check throws 400. Documented; needs explicit "case-only rename" handling if portability matters. See §10.1 |
+| H | Archive then delete a referenced page | ✅ | Archive `ALPHA` → scan reports `log.broken_links=["alpha"]`. Delete archived `ALPHA` → cascade rewrites `log`: 2× `[[ALPHA]]` + 1× `[[ALPHA\|aliased]]` demoted to `Page A and Page B Distinction` × 2 + `aliased`. Cascade-delete works on archived targets too |
+| I | Cross-case lint resolution | ✅ | `[[alpha]] [[ALPHA]] [[Alpha]]` against page slug `ALPHA` → outgoing=`["alpha"]`, broken=`[]` |
+| J | Link to archived target (Phase 2 strict slug match) | ✅ | Archive `page-a-page-b-difference`, save log with `[[page-a-page-b-difference]]` → outgoing=`["page-a-page-b-difference"]`, **broken=`["page-a-page-b-difference"]`** synchronously. Matches RFC §2: archived pages are excluded from the active slug set, so links to them are broken |
+| K | Markdown link confusable: `[text](url)` | ✅ | Plain `[docs](https://example.com)` ignored. Only `[[...]]` enters outgoing |
+| L | Malformed input `[[overview]] junk ]] [[log]] [[no-close [[ok]] end` | ⚠️ Behaviour | Parsed as 3 wikilinks: `overview`, `log`, and `"no-close [[ok"` (the non-greedy `[^\]]+?` regex captures literal `[[` inside the target). Third target → broken. Technically per-spec, looks strange in lint output; documented as known behaviour |
+| M | Oversize slug (300 chars) | ✅ | Dropped by extractor's `MAX_TARGET_LEN=256` guard. Outgoing carries only the legitimate `[[overview]]` |
+| N | Scan perf on existing 31-page KB (`格式支持测试-KB`) | ✅ | POST submit latency: **18 ms** (RFC target < 200 ms). Job `completed` within 1 s of polling (RFC target < 3 s / 100 pages). Aggregate: `totalPages=31 pagesWithBroken=29 totalBrokenRefs=81` — confirms the lint surfaces accumulated historical title-form debt as designed |
+
+### 10.1 Known behaviours worth flagging
+
+**Case-only rename portability (G)**. On H2 with default collation, a
+rename from `foo → FOO` succeeds and afterwards only `GET /pages/FOO`
+resolves (`GET /pages/foo` returns 404). On MySQL with
+`utf8mb4_unicode_ci`, the same rename throws 400 collision because
+`getBySlug("FOO")` finds the existing `foo` row. The behavioural
+asymmetry is in `WikiPageService.rename`'s pre-check:
+
+```java
+WikiPageEntity collision = getBySlug(kbId, newSlug);
+if (collision != null) { throw new IllegalArgumentException(...); }
+```
+
+The fix, if portability matters: explicitly compare
+`collision.getId().equals(existing.getId())` and treat that as the
+"renaming yourself" case (allowed) vs a true collision (rejected).
+Tracked as a follow-up.
+
+**Malformed wikilink with literal `[[` inside target (L)**. The
+non-greedy `[^\]]+?` regex captures any sequence of non-`]` characters
+between `[[` and `]]`. Input `[[no-close [[ok]]` extracts `no-close [[ok`
+as the target. That target then never resolves (slugs don't contain
+`[[`), so it lands in `broken_links` and the UI flags it for the user
+to fix. No silent corruption; just a slightly-ugly slug appearing in
+lint output.
+
+### 10.2 Performance evidence
+
+The 31-page real-content KB completes a full scan in well under 1
+second, with POST submit returning in 18 ms. The RFC's targets (POST
+< 200 ms, job < 3 s / 100 pages) are met with comfortable margin even
+on the H2 in-process backend. MySQL with proper indexing on
+`mate_wiki_page(kb_id, archived)` should perform identically or
+better.
+
+### 10.3 Bottom line
+
+14 edge-case scenarios; 12 ✅, 2 ⚠️-with-documented-behaviour. No
+regressions discovered. The two ⚠️s are not defects against the
+shipping spec — they're behaviours the spec was silent on, now
+documented here so future readers / reviewers know what to expect.
+
