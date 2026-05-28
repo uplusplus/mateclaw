@@ -881,3 +881,52 @@ This is the intended end-to-end flow:
 No data loss, no manual content edit, no stranded references. End-
 to-end recovery flow proven on live server.
 
+---
+
+## 14. Seventh pass — post-restart full sweep (2026-05-28 09:09)
+
+Server killed (`lsof -ti:18088 | kill -9`) and restarted via
+`mvn spring-boot:run`. Cold-start to first request handled in 4.1 s.
+Eight scenarios covering everything that landed in §11 / §13:
+
+| Section | Scenario | Result |
+|---|---|---|
+| §1 | State survives kill -9 + cold restart | ✅ 3 KBs from earlier sessions visible (E2E-LookupDemo / E2E-RFC55-PostFix / dev). Flyway recognised V129 already applied; no re-migration |
+| §2 | §13.6 rename outcome persistent | ✅ `GET /pages/react-mode` → 404; `GET /pages/react` → 200 title="ReAct 模式"; stategraph's content has `[[react\|ReAct 模式]]` (alias byte-identical to pre-restart state) |
+| §3 | Cross-KB lookup endpoint (10 query variants) | ✅ `ReAct`/`react`/`REACT` → 1 hit (case-insensitive); `StateGraph`/`stategraph` → 1; `agent-jiagou`/`Agent架构` (Chinese title!) → 1; `Overview` → 3 (multi-KB); `does-not-exist`, `react-mode` (old slug) → 0 |
+| §4 | Scan x 5 regression (§8 guard) | ✅ content sha1 `a80d9dcc...` identical before/after; summary sha1 `82375f43...` identical. The FieldStrategy.ALWAYS null-out bug remains fixed |
+| §5 | Case-only rename portability (§11 guard) | ✅ `react → REACT` returns 200; rollback `REACT → react` returns 200; real collision `stategraph → react` returns 400 `"already exists"` — same-id escape doesn't swallow real conflicts |
+| §6 | Cascade DELETE with multi-referrer + chinese-title snapshot | ✅ `agent-jiagou` had 2 referrers (`stategraph` + `react`). After DELETE: lookup 0 hits; stategraph residual `[[agent-jiagou]]` = 0, snapshot title "Agent架构" appears 2× as plain text in body; outgoing now `["react"]` only; broken `[]` |
+| §7 | Audit trail | ✅ Latest 5 wiki_page events captured in order: `delete Agent架构` (09:16) / `rename ReAct 模式` ×3 (post-fix portability test + original rename + earlier) / `rename Foo` (earliest test from §11 SpringBootTest run) |
+| §8 | Full KB scan post-mutations | ✅ totalPages=4 (was 5; agent-jiagou removed), pagesWithBroken=0, totalBrokenRefs=0 — zero residual debt after delete |
+
+### 14.1 Cold-start performance
+
+- JVM up + Spring context + Flyway baseline detection: **4.1 s**
+- First request (auth login) responds within 9 s of `mvn spring-boot:run`
+  invocation
+- All 9 H2 KB rows visible immediately, no warm-up gap
+
+### 14.2 Operational evidence accumulated
+
+Across seven passes, the wikilink overhaul has produced:
+
+- 6 e2e doc sections (§7, §8, §9, §10, §11/§12, §13/§14)
+- 50+ live HTTP assertions
+- 278 backend tests (273 baseline + 5 SpringBootTest regression)
+- 22 frontend Vitest tests
+- 1 mid-flight data-loss bug found and shipped a fix for, with
+  regression-locking test in place
+- 2 follow-ups (case-only rename portability + chat wikilink
+  navigation) both landed with live verification
+- 1 RFC v3.3 footnote documenting the GET /lint/broken-links
+  always-200 behaviour
+
+### 14.3 Bottom line
+
+Post-restart state is identical to pre-restart in every observable
+dimension that matters: page content, audit trail, cascade
+outcomes, lookup behaviour, rename portability. The shipping
+artefact behaves exactly as the RFC and the test suite describe.
+Ready for owner review.
+
