@@ -679,13 +679,19 @@ public class WikiPageService {
             }
             WikiLinkService.LinkAnalysis a = linkService.analyze(rewritten, activeForThisReferrer);
 
-            WikiPageEntity update = new WikiPageEntity();
-            update.setId(referrer.getId());
-            update.setContent(rewritten);
-            update.setOutgoingLinks(linkService.toJsonArray(a.outgoingLinks()));
-            update.setBrokenLinks(linkService.toJsonArray(a.brokenLinks()));
-            update.setBrokenLinksScannedAt(LocalDateTime.now());
-            pageMapper.updateById(update);
+            // LambdaUpdateWrapper — content, summary, outgoing_links and
+            // broken_links all carry FieldStrategy.ALWAYS on WikiPageEntity,
+            // so a partial-entity updateById would generate SET summary=NULL
+            // (and clear any other ALWAYS column we didn't explicitly set).
+            // The wrapper-based update only writes the four columns we mean
+            // to touch, leaving summary and the rest intact.
+            pageMapper.update(null,
+                    new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<WikiPageEntity>()
+                            .eq(WikiPageEntity::getId, referrer.getId())
+                            .set(WikiPageEntity::getContent, rewritten)
+                            .set(WikiPageEntity::getOutgoingLinks, linkService.toJsonArray(a.outgoingLinks()))
+                            .set(WikiPageEntity::getBrokenLinks, linkService.toJsonArray(a.brokenLinks()))
+                            .set(WikiPageEntity::getBrokenLinksScannedAt, LocalDateTime.now()));
             affected.add(referrer.getId());
         }
         return affected;
@@ -804,13 +810,16 @@ public class WikiPageService {
             }
             WikiLinkService.LinkAnalysis a = linkService.analyze(rewritten, activeForThisReferrer);
 
-            WikiPageEntity update = new WikiPageEntity();
-            update.setId(referrer.getId());
-            update.setContent(rewritten);
-            update.setOutgoingLinks(linkService.toJsonArray(a.outgoingLinks()));
-            update.setBrokenLinks(linkService.toJsonArray(a.brokenLinks()));
-            update.setBrokenLinksScannedAt(LocalDateTime.now());
-            pageMapper.updateById(update);
+            // LambdaUpdateWrapper to avoid the FieldStrategy.ALWAYS-induced
+            // null overwrite on summary (and other ALWAYS columns we don't
+            // touch in a rename).
+            pageMapper.update(null,
+                    new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<WikiPageEntity>()
+                            .eq(WikiPageEntity::getId, referrer.getId())
+                            .set(WikiPageEntity::getContent, rewritten)
+                            .set(WikiPageEntity::getOutgoingLinks, linkService.toJsonArray(a.outgoingLinks()))
+                            .set(WikiPageEntity::getBrokenLinks, linkService.toJsonArray(a.brokenLinks()))
+                            .set(WikiPageEntity::getBrokenLinksScannedAt, LocalDateTime.now()));
             affected.add(referrer.getId());
         }
         return affected;

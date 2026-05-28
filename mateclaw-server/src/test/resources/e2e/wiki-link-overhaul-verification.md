@@ -400,3 +400,78 @@ End-to-end "user reports broken link → lint reveals all → delete or
 rename a page → cascade clears the dangling tokens" flow is reproducible
 on a clean dev box in under three minutes (KB create + ingest + verify).
 
+---
+
+## 8. Second pass — multi-referrer / code-block / round-trip (2026-05-28)
+
+Extended e2e with deeper scenarios. **Caught and fixed one data-loss bug**
+before publishing the pass report.
+
+### 8.0 Setup
+
+Fresh KB `E2E-RFC55-StressKB`. Ingested a 5-entity team handbook (Alice
+Chen, Bob Patel, Carol Liu, Crawler subsystem, Indexing project) and
+manually edited `overview` to fan in references to all five plus a
+fenced-code block + inline-code block both containing literal
+`[[alice-chen]]` examples.
+
+### 8.1 Scenarios run
+
+| Scenario | What it covers | Result |
+|---|---|---|
+| **B. Multi-referrer cascade delete** | Delete `carol-liu` with 2 referrers (`indexing-project` + `overview`); only non-empty content gets rewritten | ✅ overview's `[[carol-liu]]` (1×) demoted to plain "Carol Liu"; outgoing updated; audit `affectedPageIds:[overview_id]` |
+| **C. Code-block protection during cascade** | Delete `alice-chen`; overview has `[[alice-chen]]` 2× in prose AND 2× in fenced/inline-code blocks | ✅ Prose `[[alice-chen]]` and `[[alice-chen\|Alice]]` demoted to `Alice Chen` / `Alice`; **code block byte-for-byte preserved**: ```` ```markdown\nUse [[alice-chen]] or [[alice-chen\|some alias]] to link to a teammate.\n``` ```` |
+| **D. Multi-referrer cascade rename + alias preservation** | Rename `bob-patel` → `robert-patel` with 2 referrers (overview has `[[bob-patel\|Bob the pair-programmer]]`, log has `[[bob-patel]]` + `[[bob-patel\|Bob]]`) | ✅ All 3 occurrences across both pages rewrite to `robert-patel`, aliases preserved; old slug → 404; audit `affectedPageIds=[overview_id, log_id]` |
+| **E. Break-then-fix round trip** | PUT log with `[[nonexistent-1]] [[also-fake]] [[robert-patel]]` → scan → fix via PUT with valid slugs only → re-scan | ✅ Break: `broken_links=["nonexistent-1","also-fake"]` synchronously, scan aggregate shows 2 refs across 1 page. Fix: `broken_links=[]` synchronously, scan aggregate clean |
+| **F. Archive + scan interaction** | Archive `crawler-subsystem`; refs index excludes it by default, includes with `?includeArchived=true` (with `archived:true`) | ✅ Default refs hides; `?includeArchived=true` returns it with the flag |
+
+### 8.2 Bug found and fixed mid-run
+
+While re-reading the multi-referrer cascade output, noticed that
+`indexing-project` had `content_len=0` even though it had been a referrer
+to `carol-liu`. Tracing down: every page in the KB had `content` and
+`summary` set to `NULL` after any of the following ran:
+
+1. `WikiLintJobService.rewriteBrokenLinks` — runs on every KB-wide scan
+2. `WikiPageService.cascadeStripReferrers` — runs on every cascade delete
+3. `WikiPageService.cascadeRenameReferrers` — runs on every cascade rename
+
+All three built a partial `WikiPageEntity` setting only the fields they
+intended to update (`id` + `outgoing_links` + `broken_links` + `broken_links_scanned_at`),
+then called `pageMapper.updateById(partialEntity)`. But `WikiPageEntity`
+declares `FieldStrategy.ALWAYS` on `content`, `summary`, `outgoingLinks`,
+and `brokenLinks`, so MyBatis-Plus generated `UPDATE ... SET content =
+NULL, summary = NULL, ...` — silently destroying the body of every page
+the cascade or scan touched.
+
+**Fix**: replace `updateById(partialEntity)` with
+`update(null, new LambdaUpdateWrapper<WikiPageEntity>().eq(...).set(col, val))`
+in all three sites. The wrapper-based path emits SET clauses only for
+explicit `.set()` calls, so unmentioned columns are untouched regardless
+of their `FieldStrategy`.
+
+### 8.3 Post-fix verification
+
+After restart with the fixed jar:
+
+- Scan x 3 on a page with 113-char content + summary → both **unchanged**
+  (length stable at 113, summary string identical).
+- Cascade delete of `alice` with `bob` as referrer → bob's content went
+  200 → 192 chars (the `[[alice]]` → `Alice` rewrite, ~8-char shrink as
+  expected), summary fully preserved.
+- Cascade rename of `carol` → `caroline` with `dave` as referrer →
+  dave's summary preserved verbatim.
+
+The same `WikiEnrichmentApplierTest` + `WikiLinkServiceCascadeTest` +
+`WikiPageServiceTest` suites still pass; the bug was strictly in the
+write-back path that those tests didn't exercise (the cascade tests
+operate on pure-string helpers; the page-service test mocks the mapper
+so the actual SQL generated doesn't matter).
+
+### 8.4 Follow-up
+
+A regression-locking integration test (real Spring + H2) for "scan must
+not null content/summary" is worth adding in a separate PR — would have
+caught this class of bug at the boundary between MyBatis-Plus field
+strategy and partial-entity update calls. Tracked.
+

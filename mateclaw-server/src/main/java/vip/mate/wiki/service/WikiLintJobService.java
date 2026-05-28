@@ -269,15 +269,24 @@ public class WikiLintJobService {
      * broken_links_scanned_at. Kept in this service so the scan loop above
      * is unambiguously per-page transactional without polluting the larger
      * WikiPageService API.
+     * <p>
+     * Uses {@link com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper}
+     * with explicit {@code set()} calls instead of {@code updateById(partial entity)}.
+     * Several columns on {@link WikiPageEntity} (content, summary,
+     * outgoing_links, broken_links) carry {@code FieldStrategy.ALWAYS} so an
+     * entity-style update with those fields left null would generate
+     * {@code SET content = NULL, summary = NULL} and wipe the page body.
+     * The wrapper-based update only emits SET clauses for the three columns
+     * we mean to touch.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void rewriteBrokenLinks(Long pageId, String outgoingLinksJson, String brokenLinksJson) {
-        WikiPageEntity update = new WikiPageEntity();
-        update.setId(pageId);
-        update.setOutgoingLinks(outgoingLinksJson);
-        update.setBrokenLinks(brokenLinksJson);
-        update.setBrokenLinksScannedAt(LocalDateTime.now());
-        pageMapper.updateById(update);
+        pageMapper.update(null,
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<WikiPageEntity>()
+                        .eq(WikiPageEntity::getId, pageId)
+                        .set(WikiPageEntity::getOutgoingLinks, outgoingLinksJson)
+                        .set(WikiPageEntity::getBrokenLinks, brokenLinksJson)
+                        .set(WikiPageEntity::getBrokenLinksScannedAt, LocalDateTime.now()));
     }
 
     private void updateJob(Long kbId, String jobId, java.util.function.Function<LintJob, LintJob> fn) {
