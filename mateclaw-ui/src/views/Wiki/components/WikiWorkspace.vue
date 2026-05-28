@@ -2,6 +2,15 @@
   <div class="wiki-workspace">
     <WikiWorkspaceHeader :kb="kb" @back="store.backToLibrary()" />
 
+    <!--
+      Broken-link banner — surfaces lint state across every tab so the user
+      can trigger a scan or view results from any browsing context. Pinned
+      between the header and the tab layout so it's the first thing they see
+      after entering the KB.
+    -->
+    <WikiBrokenLinksBanner @view="brokenPanelOpen = true" />
+    <WikiBrokenLinksPanel :open="brokenPanelOpen" @close="brokenPanelOpen = false" />
+
     <div class="wiki-layout">
       <WikiPageSidebar @open-page="onOpenPage" />
 
@@ -65,6 +74,8 @@ import HotCachePanel from './HotCachePanel.vue'
 import TransformationsPanel from './TransformationsPanel.vue'
 import WikiWorkspaceHeader from './WikiWorkspaceHeader.vue'
 import WikiPageSidebar from './WikiPageSidebar.vue'
+import WikiBrokenLinksBanner from './WikiBrokenLinksBanner.vue'
+import WikiBrokenLinksPanel from './WikiBrokenLinksPanel.vue'
 
 defineProps<{ kb: WikiKB }>()
 
@@ -77,6 +88,7 @@ const workspace = useWorkspaceStore()
 const canManageWiki = computed(() => workspace.can('manage:wiki'))
 
 const activeTab = ref('raw')
+const brokenPanelOpen = ref(false)
 
 const tabs = computed(() => {
   const list = [

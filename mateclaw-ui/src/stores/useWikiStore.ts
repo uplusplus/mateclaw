@@ -76,6 +76,39 @@ export interface WikiPageRef {
   archived: boolean
 }
 
+/** Per-page row in a broken-links report. */
+export interface WikiBrokenLinkPage {
+  // Snowflake — stay as string end-to-end.
+  pageId: string
+  slug: string
+  title: string
+  brokenRefs: string[]
+}
+
+/** Aggregate response from GET /lint/broken-links. */
+export interface WikiBrokenLinksReport {
+  kbId: number | string
+  jobId: string | null
+  completedAt: string | null
+  totalPages: number
+  pagesWithBrokenLinks: number
+  totalBrokenRefs: number
+  pages: WikiBrokenLinkPage[]
+}
+
+/** Job envelope returned by POST /lint/broken-links. */
+export interface WikiLintJob {
+  jobId: string
+  kbId: number | string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  startedAt: string
+  completedAt: string | null
+  totalPages: number
+  pagesWithBrokenLinks: number
+  totalBrokenRefs: number
+  errorMessage?: string
+}
+
 export const useWikiStore = defineStore('wiki', () => {
   const knowledgeBases = ref<WikiKB[]>([])
   const currentKB = ref<WikiKB | null>(null)
@@ -96,6 +129,18 @@ export const useWikiStore = defineStore('wiki', () => {
   const pageRefs = ref<WikiPageRef[]>([])
   const archivedPageRefs = ref<WikiPageRef[]>([])
 
+  // Broken-link lint state. `brokenLinksReport` holds the latest aggregate
+  // server response; `brokenLinksJob` tracks the in-flight scan job (null
+  // when nothing is running or after the last scan settled). Both are
+  // scoped to currentKB — clear in selectKB / backToLibrary so KB switching
+  // doesn't bleed stale data across knowledge bases.
+  const brokenLinksReport = ref<WikiBrokenLinksReport | null>(null)
+  const brokenLinksJob = ref<WikiLintJob | null>(null)
+  const brokenLinksLoading = ref(false)
+  // Track the timer id so a second startBrokenLinksScan call cancels the
+  // stale poller — avoids double-fires after rapid clicks.
+  let brokenLinksPollTimer: ReturnType<typeof setInterval> | null = null
+
   async function fetchKnowledgeBases() {
     loading.value = true
     try {
@@ -114,7 +159,17 @@ export const useWikiStore = defineStore('wiki', () => {
     // pageRefs refresh in parallel with materials + pages — the viewer needs
     // the resolution index ready before it tries to postprocess wikilinks.
     archivedPageRefs.value = []
-    await Promise.all([fetchRawMaterials(id), fetchPages(id), fetchPageRefs(id)])
+    // Clear stale broken-links state from the previous KB; the report fetch
+    // below repopulates it (or leaves it null if no scan has run on this KB).
+    brokenLinksReport.value = null
+    brokenLinksJob.value = null
+    if (brokenLinksPollTimer) { clearInterval(brokenLinksPollTimer); brokenLinksPollTimer = null }
+    await Promise.all([
+      fetchRawMaterials(id),
+      fetchPages(id),
+      fetchPageRefs(id),
+      loadBrokenLinksReport(id),
+    ])
   }
 
   async function createKB(data: { name: string; description?: string; agentId?: number }) {
@@ -141,6 +196,10 @@ export const useWikiStore = defineStore('wiki', () => {
     pages.value = []
     pageRefs.value = []
     archivedPageRefs.value = []
+    brokenLinksReport.value = null
+    brokenLinksJob.value = null
+    if (brokenLinksPollTimer) { clearInterval(brokenLinksPollTimer); brokenLinksPollTimer = null }
+    brokenLinksLoading.value = false
     selectedRawId.value = null
   }
 
@@ -176,6 +235,80 @@ export const useWikiStore = defineStore('wiki', () => {
     const res: any = await wikiApi.listPageRefs(kbId, true)
     const all = (res.data?.items ?? res.items ?? []) as WikiPageRef[]
     archivedPageRefs.value = all.filter((p) => p.archived)
+  }
+
+  /**
+   * Load the latest broken-links report for the active KB. Treats HTTP 404
+   * ("no scan yet") as an expected empty state rather than an error — the
+   * caller decides whether to surface "click scan" UX.
+   */
+  async function loadBrokenLinksReport(kbId: number) {
+    try {
+      const res: any = await wikiApi.getBrokenLinksReport(kbId)
+      brokenLinksReport.value = (res.data ?? res) as WikiBrokenLinksReport
+    } catch (e: any) {
+      if (e?.response?.status === 404 || e?.code === 404) {
+        brokenLinksReport.value = null
+      } else {
+        console.error('[Wiki] Failed to load broken-links report', e)
+      }
+    }
+  }
+
+  /**
+   * Start (or rejoin) a broken-links scan job and poll the aggregate
+   * endpoint until completedAt advances past the job's startedAt. Updates
+   * `brokenLinksJob` for in-flight UX and `brokenLinksReport` once the
+   * server confirms completion. Returns when polling resolves or aborts.
+   */
+  async function startBrokenLinksScan(kbId: number) {
+    if (brokenLinksPollTimer) {
+      clearInterval(brokenLinksPollTimer)
+      brokenLinksPollTimer = null
+    }
+    brokenLinksLoading.value = true
+    try {
+      const res: any = await wikiApi.startBrokenLinksScan(kbId)
+      const job = (res.data ?? res) as WikiLintJob
+      brokenLinksJob.value = job
+      // If POST returned an already-completed job (e.g. instant scan on tiny
+      // KB), refresh the aggregate immediately and skip polling.
+      if (job.status === 'completed' || job.status === 'failed') {
+        await loadBrokenLinksReport(kbId)
+        brokenLinksLoading.value = false
+        return job
+      }
+      // Otherwise poll the aggregate every 2s. Authoritative "is this done"
+      // signal is completedAt > startedAt — the job state in memory is
+      // refreshed alongside for failure surfacing.
+      const startedAt = job.startedAt
+      brokenLinksPollTimer = setInterval(async () => {
+        try {
+          await loadBrokenLinksReport(kbId)
+          const report = brokenLinksReport.value
+          if (report?.completedAt && (!startedAt || report.completedAt >= startedAt)) {
+            if (brokenLinksPollTimer) clearInterval(brokenLinksPollTimer)
+            brokenLinksPollTimer = null
+            brokenLinksJob.value = null
+            brokenLinksLoading.value = false
+          }
+        } catch (e) {
+          console.error('[Wiki] Polling broken-links scan failed', e)
+        }
+      }, 2000)
+      // Hard timeout — give up tracking after 5 minutes; user can re-trigger.
+      setTimeout(() => {
+        if (brokenLinksPollTimer) {
+          clearInterval(brokenLinksPollTimer)
+          brokenLinksPollTimer = null
+          brokenLinksLoading.value = false
+        }
+      }, 5 * 60 * 1000)
+      return job
+    } catch (e) {
+      brokenLinksLoading.value = false
+      throw e
+    }
   }
 
   // Background refreshes (job completion, SSE events, fallback polling) must
@@ -263,6 +396,9 @@ export const useWikiStore = defineStore('wiki', () => {
     totalPageCount,
     pageRefs,
     archivedPageRefs,
+    brokenLinksReport,
+    brokenLinksJob,
+    brokenLinksLoading,
     fetchKnowledgeBases,
     selectKB,
     createKB,
@@ -272,6 +408,8 @@ export const useWikiStore = defineStore('wiki', () => {
     fetchPages,
     fetchPageRefs,
     fetchArchivedPageRefs,
+    loadBrokenLinksReport,
+    startBrokenLinksScan,
     refreshCurrentKB,
     filterPagesByRaw,
     clearRawFilter,

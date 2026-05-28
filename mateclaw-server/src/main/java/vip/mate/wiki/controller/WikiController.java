@@ -19,6 +19,7 @@ import vip.mate.wiki.model.WikiPageEntity;
 import vip.mate.wiki.model.WikiRawMaterialEntity;
 import vip.mate.wiki.service.WikiDirectoryScanService;
 import vip.mate.wiki.service.WikiKnowledgeBaseService;
+import vip.mate.wiki.service.WikiLintJobService;
 import vip.mate.wiki.service.WikiPageService;
 import vip.mate.wiki.service.WikiProcessingService;
 import vip.mate.wiki.service.WikiRawMaterialService;
@@ -50,6 +51,7 @@ public class WikiController {
     private final WikiPageService pageService;
     private final WikiProcessingService processingService;
     private final WikiDirectoryScanService scanService;
+    private final WikiLintJobService lintJobService;
     private final WikiProperties properties;
     private final WikiProgressBus progressBus;
     private final AuditEventService auditEventService;
@@ -513,6 +515,90 @@ public class WikiController {
                                                  @RequestHeader(value = "X-Workspace-Id", required = false) Long workspaceId) {
         verifyKBWorkspace(kbId, workspaceId);
         return R.ok(pageService.getBacklinks(kbId, slug));
+    }
+
+    // ==================== Wikilink lint (broken-link scan) ====================
+
+    /**
+     * Start a KB-wide broken-link scan. Job-based async: returns immediately
+     * with a {@code {jobId, status, startedAt}} envelope; the real work runs
+     * on a single-threaded background executor and writes per-page results
+     * back to {@code mate_wiki_page.broken_links}. Idempotent under in-flight
+     * load — repeated POSTs while a scan is queued or running return the
+     * existing job rather than queueing duplicates.
+     */
+    @RequireWorkspaceRole("member")
+    @Operation(summary = "启动 Wiki 死链扫描 job（异步）")
+    @PostMapping("/knowledge-bases/{kbId}/lint/broken-links")
+    public R<Map<String, Object>> startBrokenLinksScan(
+            @PathVariable Long kbId,
+            @RequestHeader(value = "X-Workspace-Id", required = false) Long workspaceId) {
+        verifyKBWorkspace(kbId, workspaceId);
+        WikiLintJobService.LintJob job = lintJobService.startOrGetRunning(kbId);
+        return R.ok(jobEnvelope(job));
+    }
+
+    /**
+     * Read the most recent completed scan result for {@code kbId}. Aggregated
+     * from persisted {@code broken_links} fields, so it survives a server
+     * restart that drops the in-memory job state.
+     */
+    @RequireWorkspaceRole("viewer")
+    @Operation(summary = "读取最近一次死链扫描的聚合结果")
+    @GetMapping("/knowledge-bases/{kbId}/lint/broken-links")
+    public R<Map<String, Object>> getBrokenLinksReport(
+            @PathVariable Long kbId,
+            @RequestHeader(value = "X-Workspace-Id", required = false) Long workspaceId) {
+        verifyKBWorkspace(kbId, workspaceId);
+        WikiLintJobService.Aggregate agg = lintJobService.aggregate(kbId);
+        if (agg == null) {
+            return R.fail(404, "no scan yet, POST to start one");
+        }
+        WikiLintJobService.LintJob latest = lintJobService.getLatestJob(kbId);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("kbId", agg.kbId());
+        body.put("jobId", latest != null ? latest.jobId() : null);
+        body.put("completedAt", agg.completedAt());
+        body.put("totalPages", agg.totalPages());
+        body.put("pagesWithBrokenLinks", agg.pagesWithBrokenLinks());
+        body.put("totalBrokenRefs", agg.totalBrokenRefs());
+        body.put("pages", agg.pages());
+        return R.ok(body);
+    }
+
+    /**
+     * Optional job-status endpoint. Not strictly needed for the v1 UX
+     * (the frontend can poll the aggregate endpoint and watch
+     * {@code completedAt}), but useful for debugging and future progress
+     * reporting.
+     */
+    @RequireWorkspaceRole("viewer")
+    @Operation(summary = "查询 Wiki 死链扫描 job 状态")
+    @GetMapping("/knowledge-bases/{kbId}/lint/broken-links/jobs/{jobId}")
+    public R<Map<String, Object>> getBrokenLinksJob(
+            @PathVariable Long kbId,
+            @PathVariable String jobId,
+            @RequestHeader(value = "X-Workspace-Id", required = false) Long workspaceId) {
+        verifyKBWorkspace(kbId, workspaceId);
+        WikiLintJobService.LintJob job = lintJobService.getJob(jobId);
+        if (job == null || !job.kbId().equals(kbId)) {
+            return R.fail(404, "job not found");
+        }
+        return R.ok(jobEnvelope(job));
+    }
+
+    private Map<String, Object> jobEnvelope(WikiLintJobService.LintJob job) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("jobId", job.jobId());
+        body.put("kbId", job.kbId());
+        body.put("status", job.status().name().toLowerCase());
+        body.put("startedAt", job.startedAt());
+        body.put("completedAt", job.completedAt());
+        body.put("totalPages", job.totalPages());
+        body.put("pagesWithBrokenLinks", job.pagesWithBrokenLinks());
+        body.put("totalBrokenRefs", job.totalBrokenRefs());
+        if (job.errorMessage() != null) body.put("errorMessage", job.errorMessage());
+        return body;
     }
 
     // RFC-051 PR-7 follow-up: archive surfaces. Default-list is filtered, so the UI

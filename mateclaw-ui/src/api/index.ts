@@ -791,6 +791,15 @@ export const wikiApi = {
   // authoritative resolution index used by the viewer's wikilink postprocess.
   listPageRefs: (kbId: number, includeArchived = false) =>
     http.get(`/wiki/knowledge-bases/${kbId}/pages/refs`, { params: { includeArchived } }),
+
+  // Broken-link lint (job-based async). POST starts/returns the running job,
+  // GET reads the most recent completed scan aggregated across the KB.
+  startBrokenLinksScan: (kbId: number) =>
+    http.post(`/wiki/knowledge-bases/${kbId}/lint/broken-links`),
+  getBrokenLinksReport: (kbId: number) =>
+    http.get(`/wiki/knowledge-bases/${kbId}/lint/broken-links`),
+  getBrokenLinksJob: (kbId: number, jobId: string) =>
+    http.get(`/wiki/knowledge-bases/${kbId}/lint/broken-links/jobs/${jobId}`),
   getPage: (kbId: number, slug: string) =>
     http.get(`/wiki/knowledge-bases/${kbId}/pages/${encodeURIComponent(slug)}`),
   updatePage: (kbId: number, slug: string, content: string) =>
