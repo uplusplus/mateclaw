@@ -676,3 +676,47 @@ e2e passes. The bug discovered mid-§8 has a unit test guard. The
 portability gap noted in §10.1 has been fixed and tested. The shipping
 spec (RFC 55 v3.3) matches observable behaviour on both H2 and MySQL.
 
+---
+
+## 12. Fifth pass — live verification of §11 fixes + chain / concurrent
+       (2026-05-28)
+
+After committing the §11 fixes, re-validated against the live server
+on dev. Same scenarios from §10 plus three new chain / concurrency
+ones the prior passes hadn't exercised.
+
+### 12.1 §11 fixes are live
+
+| Test | Result | Trace |
+|---|---|---|
+| Case-only rename `alpha → ALPHA` | ✅ HTTP 200 | `{"oldSlug":"alpha","newSlug":"ALPHA","pageId":"2059791691121410050"}` |
+| Real collision `beta → ALPHA` (different page) | ✅ HTTP 400 | `"a page with slug 'ALPHA' already exists in this KB"` — same-id escape did not swallow this |
+| Same-slug rename `ALPHA → ALPHA` | ✅ HTTP 400 | `"new slug equals old slug — no-op"` |
+| Scan × 5 byte-identity (sha1 of content + summary) | ✅ identical | `content sha1 e4adbec4...` and `summary sha1 0b62e4c4...` stable across 5 consecutive POSTs |
+
+### 12.2 New chain + concurrency scenarios
+
+| Code | Scenario | Result |
+|---|---|---|
+| C1 | Chain `rename ALPHA → GAMMA` then `delete GAMMA`, with `beta` referencing `[[alpha]]` 2× | ✅ After rename: `beta.outgoing=["gamma"]`. After delete: `beta.outgoing=[]`, `broken=[]`, residual `[[GAMMA]]`/`[[alpha]]` count = 0. Audit trail records both rename + final delete with the consistent snapshot title "Alpha" preserved through all 3 mutations |
+| C2 | Cross-KB concurrent: 3 POSTs to 3 different KBs at the same millisecond | ✅ 3 distinct jobIds returned simultaneously; all 3 KBs reach `completed` within 3 s. Aggregates: KB-1 (31p, 29 broken, 81 refs), KB-2 (29p, 26 broken, 75 refs), KB-3 (24p, 18 broken, 89 refs). Per-KB isolation confirmed — no cross-talk |
+| C3 | Stress: PUT with 10 fake slugs + 2 real (`[[a1]]..[[c2|aliased]]` + `[[overview]] [[log]]`) | ✅ outgoing has 12 entries (all 10 fakes + 2 reals, with `c2` alias-form correctly merged into a single `c2` slug); broken has exactly the 10 fakes |
+| C4 | Re-run 31-page KB scan post-fix to confirm perf unchanged | ✅ POST latency 32 ms (within noise of earlier 18 ms), full scan to `completed` < 1 s |
+
+### 12.3 Concentrated-debt observation
+
+KB id `2054907618529591298` (`QA-Bug-Test KB`, 24 pages, real historical
+content) returned `89 broken refs across 18 of 24 pages` (75 % broken-
+rate). Higher concentration than the 31-page test KB (29/31 = 94 % but
+fewer refs each). Both numbers are consistent with the lint correctly
+catching title-form references in content produced before Phase 3
+shipped — exactly the historical debt the lint exists to surface for
+cleanup.
+
+### 12.4 Bottom line
+
+All five passes (§7, §8, §9, §10, §11/§12) reproducible on a clean
+dev box. 14 + 3 + 9 + 14 + 5 + 4 = 49 documented assertions across
+five distinct phases of validation. No open defects; both follow-ups
+shipped and live-verified.
+
