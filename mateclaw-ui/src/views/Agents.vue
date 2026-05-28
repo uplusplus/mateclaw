@@ -786,7 +786,9 @@ const defaultForm = (): Partial<Agent> & { name: string; defaultThinkingLevel: s
   tags: '',
   enabled: true,
   defaultThinkingLevel: null,
-  workspaceBasePath: null,
+  // Agent type declares this as `string | undefined`; using `undefined` keeps
+  // the Partial<Agent> shape happy without widening the type to allow null.
+  workspaceBasePath: undefined,
   // Issue #184 — explicit opt-out flags. Default false matches the legacy
   // "zero rows = inherit global default" contract for newly-created agents.
   skillsDisabled: false,
@@ -978,7 +980,7 @@ async function openEditModal(agent: Agent) {
     tags: agent.tags || '',
     enabled: agent.enabled,
     defaultThinkingLevel: (agent as any).defaultThinkingLevel || null,
-    workspaceBasePath: agent.workspaceBasePath || null,
+    workspaceBasePath: agent.workspaceBasePath || undefined,
     skillsDisabled: agent.skillsDisabled === true,
     toolsDisabled: agent.toolsDisabled === true,
   }

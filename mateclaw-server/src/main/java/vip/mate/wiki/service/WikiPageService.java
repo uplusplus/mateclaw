@@ -52,6 +52,18 @@ public class WikiPageService {
     /** Agent 引用记录 */
     public record ReferenceEntry(String slug, String title, int refCount) {}
 
+    /**
+     * Lightweight page reference for client-side wikilink resolution.
+     * <p>
+     * Carries only {slug, title, archived} — no content, no source, no enrichment
+     * fields. Designed so the frontend can build a slug/title lookup map without
+     * dragging full page entities (each of which can be tens of KB once content
+     * is loaded). The {@code archived} flag lets the renderer pick the correct
+     * visual state (active link vs archived link vs broken span) without a
+     * second roundtrip.
+     */
+    public record PageRef(String slug, String title, boolean archived) {}
+
     /** 获取被引用最多的页面 Top N */
     public List<ReferenceEntry> getTopReferenced(Long kbId, int limit) {
         String prefix = kbId + ":";
@@ -176,6 +188,44 @@ public class WikiPageService {
     /** 失效指定知识库的摘要缓存（页面增删改时调用） */
     public void evictSummaryCache(Long kbId) {
         summaryCache.remove(kbId);
+    }
+
+    /**
+     * List all wikilink resolution refs in a knowledge base.
+     * <p>
+     * The frontend wikilink resolver needs a complete {slug → page} index that
+     * is independent of the user's raw-material filter and unaffected by lazy
+     * pagination. {@link #listByKbId} only returns non-archived rows and is
+     * filtered by the UI's selected raw, so it cannot back wikilink resolution.
+     * This method serves the dedicated {@code GET /pages/refs} endpoint and
+     * returns minimal projections (slug + title + archived flag).
+     * <p>
+     * When {@code includeArchived} is false (default), reuses the 5-minute
+     * summary cache for free; archived pages are absent there by construction.
+     * When true, runs a fresh query selecting only the three projected columns
+     * — uncached, because archived links appear on a small subset of pages and
+     * are not worth caching invalidation complexity.
+     *
+     * @param kbId             knowledge base
+     * @param includeArchived  true to include archived=1 rows; false (default)
+     *                         returns only active pages
+     */
+    public List<PageRef> listAllRefs(Long kbId, boolean includeArchived) {
+        if (!includeArchived) {
+            return listSummaries(kbId).stream()
+                    .map(p -> new PageRef(p.getSlug(), p.getTitle(), false))
+                    .toList();
+        }
+        List<WikiPageEntity> rows = pageMapper.selectList(
+                new LambdaQueryWrapper<WikiPageEntity>()
+                        .select(WikiPageEntity::getSlug, WikiPageEntity::getTitle,
+                                WikiPageEntity::getArchived)
+                        .eq(WikiPageEntity::getKbId, kbId)
+                        .orderByAsc(WikiPageEntity::getTitle));
+        return rows.stream()
+                .map(p -> new PageRef(p.getSlug(), p.getTitle(),
+                        p.getArchived() != null && p.getArchived() == 1))
+                .toList();
     }
 
     /**

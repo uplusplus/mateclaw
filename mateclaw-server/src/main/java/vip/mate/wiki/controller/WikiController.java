@@ -444,6 +444,35 @@ public class WikiController {
         return R.ok(page);
     }
 
+    /**
+     * Lightweight wikilink resolution index.
+     * <p>
+     * The viewer's wikilink resolver needs a {slug, title, archived} list that
+     * (1) is not constrained by the user's selected raw-material filter, and
+     * (2) is not paginated. The general page list endpoint above is filtered
+     * by rawId and may scope down based on UI state, so this is a separate,
+     * minimal endpoint dedicated to the resolver.
+     * <p>
+     * Archived pages are excluded by default. Pass {@code includeArchived=true}
+     * to retrieve archived rows as well (useful when the renderer needs to mark
+     * existing links to archived targets as such instead of treating them as
+     * broken links).
+     */
+    @RequireWorkspaceRole("viewer")
+    @Operation(summary = "获取 Wiki 页面引用索引（slug/title/archived，供 wikilink 解析）")
+    @GetMapping("/knowledge-bases/{kbId}/pages/refs")
+    public R<Map<String, Object>> listPageRefs(
+            @PathVariable Long kbId,
+            @RequestParam(name = "includeArchived", defaultValue = "false") boolean includeArchived,
+            @RequestHeader(value = "X-Workspace-Id", required = false) Long workspaceId) {
+        verifyKBWorkspace(kbId, workspaceId);
+        List<WikiPageService.PageRef> items = pageService.listAllRefs(kbId, includeArchived);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("kbId", kbId);
+        body.put("items", items);
+        return R.ok(body);
+    }
+
     @RequireWorkspaceRole("member")
     @Operation(summary = "手动编辑 Wiki 页面")
     @PutMapping("/knowledge-bases/{kbId}/pages/{slug}")

@@ -63,6 +63,19 @@ export function isProtectedPage(page: WikiPage | null | undefined): boolean {
   return page.locked === 1
 }
 
+/**
+ * Lightweight {slug, title, archived} entry used to resolve `[[...]]` wikilinks
+ * in rendered wiki content. Distinct from {@link WikiPage} — pageRefs are never
+ * filtered by the user's raw-material selection and never carry content, so the
+ * renderer can always trust them as the authoritative resolution index for the
+ * active knowledge base.
+ */
+export interface WikiPageRef {
+  slug: string
+  title: string
+  archived: boolean
+}
+
 export const useWikiStore = defineStore('wiki', () => {
   const knowledgeBases = ref<WikiKB[]>([])
   const currentKB = ref<WikiKB | null>(null)
@@ -74,6 +87,14 @@ export const useWikiStore = defineStore('wiki', () => {
   // Raw material filter state
   const selectedRawId = ref<number | null>(null)
   const totalPageCount = ref(0)
+
+  // Wikilink resolution index — kept separate from `pages` because (a) it must
+  // survive the raw-material filter, and (b) the viewer's postprocess needs an
+  // O(1) slug/title lookup over the full KB. `archivedPageRefs` is only loaded
+  // on demand: most pages don't reference archived targets, and asking for them
+  // by default would let archived slugs leak into the active resolution map.
+  const pageRefs = ref<WikiPageRef[]>([])
+  const archivedPageRefs = ref<WikiPageRef[]>([])
 
   async function fetchKnowledgeBases() {
     loading.value = true
@@ -90,7 +111,10 @@ export const useWikiStore = defineStore('wiki', () => {
   async function selectKB(id: number) {
     const res: any = await wikiApi.getKB(id)
     currentKB.value = res.data || res
-    await Promise.all([fetchRawMaterials(id), fetchPages(id)])
+    // pageRefs refresh in parallel with materials + pages — the viewer needs
+    // the resolution index ready before it tries to postprocess wikilinks.
+    archivedPageRefs.value = []
+    await Promise.all([fetchRawMaterials(id), fetchPages(id), fetchPageRefs(id)])
   }
 
   async function createKB(data: { name: string; description?: string; agentId?: number }) {
@@ -115,6 +139,8 @@ export const useWikiStore = defineStore('wiki', () => {
     currentPage.value = null
     rawMaterials.value = []
     pages.value = []
+    pageRefs.value = []
+    archivedPageRefs.value = []
     selectedRawId.value = null
   }
 
@@ -129,6 +155,29 @@ export const useWikiStore = defineStore('wiki', () => {
     if (!rawId) totalPageCount.value = pages.value.length
   }
 
+  /**
+   * Fetch the active (non-archived) wikilink resolution index. Called on KB
+   * switch and from {@link refreshCurrentKB} so the viewer always has a fresh
+   * map. `archivedPageRefs` is left alone — call {@link fetchArchivedPageRefs}
+   * lazily if the viewer detects a link pointing at a possibly archived target.
+   */
+  async function fetchPageRefs(kbId: number) {
+    const res: any = await wikiApi.listPageRefs(kbId, false)
+    pageRefs.value = (res.data?.items ?? res.items ?? []) as WikiPageRef[]
+  }
+
+  /**
+   * Lazily fetch archived refs so the viewer can label existing links to
+   * archived targets without polluting the default resolution map (which would
+   * otherwise let LLM-generated content keep pointing at retired pages).
+   */
+  async function fetchArchivedPageRefs(kbId: number) {
+    if (archivedPageRefs.value.length > 0) return
+    const res: any = await wikiApi.listPageRefs(kbId, true)
+    const all = (res.data?.items ?? res.items ?? []) as WikiPageRef[]
+    archivedPageRefs.value = all.filter((p) => p.archived)
+  }
+
   // Background refreshes (job completion, SSE events, fallback polling) must
   // not drop the user's active raw-material filter. Re-fetch the page list
   // scoped to selectedRawId whenever a filter is applied — otherwise the list
@@ -141,6 +190,9 @@ export const useWikiStore = defineStore('wiki', () => {
       wikiApi.getKB(kbId),
       fetchRawMaterials(kbId),
       fetchPages(kbId, selectedRawId.value ?? undefined),
+      // Keep refs in lockstep with the rest of the KB state so a freshly
+      // created page is immediately resolvable by the viewer.
+      fetchPageRefs(kbId),
     ])
     const nextKB = (kbRes as any).data || kbRes
     currentKB.value = nextKB
@@ -209,6 +261,8 @@ export const useWikiStore = defineStore('wiki', () => {
     loading,
     selectedRawId,
     totalPageCount,
+    pageRefs,
+    archivedPageRefs,
     fetchKnowledgeBases,
     selectKB,
     createKB,
@@ -216,6 +270,8 @@ export const useWikiStore = defineStore('wiki', () => {
     backToLibrary,
     fetchRawMaterials,
     fetchPages,
+    fetchPageRefs,
+    fetchArchivedPageRefs,
     refreshCurrentKB,
     filterPagesByRaw,
     clearRawFilter,

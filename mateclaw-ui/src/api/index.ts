@@ -786,6 +786,11 @@ export const wikiApi = {
   // Wiki Pages
   listPages: (kbId: number, rawId?: number) =>
     http.get(`/wiki/knowledge-bases/${kbId}/pages`, rawId != null ? { params: { rawId } } : undefined),
+  // Lightweight {slug, title, archived} list for wikilink resolution. Never
+  // paginated and not scoped by the current raw-material filter — this is the
+  // authoritative resolution index used by the viewer's wikilink postprocess.
+  listPageRefs: (kbId: number, includeArchived = false) =>
+    http.get(`/wiki/knowledge-bases/${kbId}/pages/refs`, { params: { includeArchived } }),
   getPage: (kbId: number, slug: string) =>
     http.get(`/wiki/knowledge-bases/${kbId}/pages/${encodeURIComponent(slug)}`),
   updatePage: (kbId: number, slug: string, content: string) =>
