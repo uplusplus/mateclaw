@@ -1412,8 +1412,13 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter implements Stre
      * {@code senderId} is the full open id. Mirror that exactly:
      * {@code groups → feishu:{shortSuffix}}, {@code DMs → feishu:{senderOpenId}}.
      */
-    private String buildConversationId(String shortSuffix, String senderOpenId, boolean isGroup) {
-        String identifier = isGroup ? shortSuffix : senderOpenId;
+    static String buildConversationId(String shortSuffix, String senderOpenId, boolean isGroup) {
+        // The routed ChannelMessage carries chatId = (isGroup ? shortSuffix : null);
+        // the router then falls back to senderId when that chatId is null. Mirror both
+        // steps so the storage id matches the runtime id in every case (including the
+        // degenerate group-with-no-suffix path).
+        String routedChatId = isGroup ? shortSuffix : null;
+        String identifier = routedChatId != null ? routedChatId : senderOpenId;
         return identifier != null ? CHANNEL_TYPE + ":" + identifier : null;
     }
 
