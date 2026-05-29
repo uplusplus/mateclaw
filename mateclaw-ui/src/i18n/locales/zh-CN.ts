@@ -303,6 +303,12 @@ export default {
     thinkingOn: '深度思考已开启',
     thinkingOff: '点击开启深度思考',
     thinkingUnsupported: '当前模型不支持深度思考',
+    slashMenuTitle: '技能',
+    slashMenuHint: '↑↓ 选择 · Enter 确认 · Esc 关闭',
+    slashMenuLoading: '加载技能中…',
+    slashMenuEmpty: '没有匹配的技能',
+    slashMenuSearchPlaceholder: '搜索技能…',
+    useSkillDirective: '使用「{name}」技能：',
     subtitle: '记忆 · 知识库 · 技能 · 自动化 —— 你的个人 AI 工作面',
     // 排队相关
     queuedSending: '正在发送排队消息...',

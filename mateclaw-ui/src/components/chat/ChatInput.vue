@@ -133,6 +133,13 @@
       </div>
 
       <div class="input-area">
+      <SkillSlashMenu
+        v-if="slashActive"
+        ref="slashMenuRef"
+        :query="slashQuery"
+        @select="handleSkillSelect"
+        @close="handleSlashClose"
+      />
       <textarea
         ref="textareaRef"
         v-model="inputValue"
@@ -141,11 +148,12 @@
         :disabled="disabled"
         :maxlength="maxLength"
         rows="1"
+        @keydown="handleSlashKeydown"
         @keydown.enter.exact.prevent="handleEnter"
         @compositionstart="isComposing = true"
         @compositionend="isComposing = false"
-        @focus="isFocused = true"
-        @blur="isFocused = false"
+        @focus="onTextareaFocus"
+        @blur="onTextareaBlur"
         @input="autoResize"
         @paste="handlePaste"
       ></textarea>
@@ -232,7 +240,8 @@ import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowDown, CloseBold, MagicStick, Microphone, Paperclip, Promotion, Select, Timer, WarningFilled } from '@element-plus/icons-vue'
 import { useToolLabel } from '@/composables/useToolLabel'
-import type { ChatAttachment, PendingApprovalMeta, StreamPhase, QueuedMessage } from '@/types'
+import SkillSlashMenu from '@/components/chat/SkillSlashMenu.vue'
+import type { ChatAttachment, PendingApprovalMeta, StreamPhase, QueuedMessage, Skill } from '@/types'
 
 interface Props {
   /** 输入值 */
@@ -272,6 +281,12 @@ interface Props {
    * 不响应点击，tooltip 提示当前模型不支持深度思考。默认 true 以保持向后兼容。
    */
   thinkingSupported?: boolean
+  /**
+   * Whether the current agent can use skills. When false the skill slash menu
+   * is suppressed — a skills-disabled agent has no `load_skill` tool, so naming
+   * a skill would be a dead end.
+   */
+  skillsEnabled?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -291,6 +306,7 @@ const props = withDefaults(defineProps<Props>(), {
   enableTalkMode: false,
   thinkingEnabled: false,
   thinkingSupported: true,
+  skillsEnabled: true,
 })
 
 const emit = defineEmits<{
@@ -323,6 +339,102 @@ const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const isFocused = ref(false)
 const isComposing = ref(false)
+
+// ---- Skill slash-command menu ----
+// The menu opens when the whole input is a single "/<query>" token (no spaces
+// yet). Picking a skill rewrites the input to a directive that names the skill,
+// which the agent recognises and loads via `load_skill`.
+const slashMenuRef = ref<InstanceType<typeof SkillSlashMenu> | null>(null)
+const slashDismissed = ref(false)
+const slashMatch = computed(() => {
+  const m = /^\/([^\s/]*)$/.exec(props.modelValue)
+  return m ? m[1] : null
+})
+const slashQuery = computed(() => slashMatch.value ?? '')
+const slashActive = computed(
+  () =>
+    slashMatch.value !== null &&
+    !slashDismissed.value &&
+    !props.disabled &&
+    !props.pendingApproval &&
+    props.skillsEnabled,
+)
+// Leaving slash mode (cleared the "/" token) re-arms the menu for next time.
+watch(slashMatch, (val) => {
+  if (val === null) slashDismissed.value = false
+})
+
+function handleSlashKeydown(e: KeyboardEvent) {
+  if (!slashActive.value) return
+  const menu = slashMenuRef.value
+  if (!menu) return
+  switch (e.key) {
+    case 'ArrowDown':
+      e.preventDefault()
+      menu.next()
+      break
+    case 'ArrowUp':
+      e.preventDefault()
+      menu.prev()
+      break
+    case 'Enter':
+      if (!isComposing.value && menu.count() > 0) {
+        e.preventDefault()
+        menu.confirm()
+      }
+      break
+    case 'Tab':
+      if (menu.count() > 0) {
+        e.preventDefault()
+        menu.confirm()
+      }
+      break
+    case 'Escape':
+      e.preventDefault()
+      slashDismissed.value = true
+      break
+  }
+}
+
+function handleSkillSelect(skill: Skill) {
+  inputValue.value = t('chat.useSkillDirective', { name: skill.name })
+  slashDismissed.value = false
+  nextTick(() => {
+    const el = textareaRef.value
+    if (el) {
+      el.focus()
+      const end = el.value.length
+      el.setSelectionRange(end, end)
+    }
+    autoResize()
+  })
+}
+
+// On open, the menu autofocuses its search box, which blurs the textarea. That
+// is expected focus movement — keep the menu open. Only dismiss when focus
+// actually leaves the input+menu (clicked elsewhere). The relatedTarget check
+// covers direct focus moves; the deferred activeElement check covers browsers
+// that report a null relatedTarget for programmatic focus.
+function onTextareaBlur(e: FocusEvent) {
+  isFocused.value = false
+  const next = e.relatedTarget as HTMLElement | null
+  if (next && next.closest && next.closest('.skill-slash-menu')) return
+  setTimeout(() => {
+    const ae = document.activeElement as HTMLElement | null
+    if (ae && ae.closest && ae.closest('.skill-slash-menu')) return
+    slashDismissed.value = true
+  }, 0)
+}
+
+function onTextareaFocus() {
+  isFocused.value = true
+}
+
+// The menu asked to close (Escape, or focus left the menu). Suppress it until
+// the "/" token is cleared and retyped.
+function handleSlashClose() {
+  slashDismissed.value = true
+}
 
 // Always-approve dropdown — collapsed by default; opens on the chevron click,
 // closes on outside click or after the user picks a scope.
@@ -394,6 +506,9 @@ const sendBtnClass = computed(() => ({
 // 处理回车键
 const handleEnter = () => {
   if (isComposing.value) return
+  // When the slash menu is showing matches, Enter confirms the highlighted
+  // skill (handled in handleSlashKeydown) instead of submitting the message.
+  if (slashActive.value && (slashMenuRef.value?.count() ?? 0) > 0) return
   handleSubmit()
 }
 
@@ -570,6 +685,7 @@ defineExpose({
 
 /* 输入区域 */
 .input-area {
+  position: relative;
   display: flex;
   gap: 10px;
   align-items: flex-end;

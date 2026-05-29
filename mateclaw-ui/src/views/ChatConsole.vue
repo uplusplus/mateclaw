@@ -217,6 +217,7 @@
         v-model="inputText"
         :loading="isGenerating && !hasPendingApproval"
         :disabled="blockingPrompt || !currentAgent"
+        :skills-enabled="!!currentAgent && !currentAgent.skillsDisabled"
         :placeholder="$t('chat.messagePlaceholder')"
         :hint="currentRuntimeModel"
         :attachments="pendingAttachments"

@@ -303,6 +303,12 @@ export default {
     thinkingOn: 'Deep thinking enabled',
     thinkingOff: 'Click to enable deep thinking',
     thinkingUnsupported: 'Current model does not support deep thinking',
+    slashMenuTitle: 'Skills',
+    slashMenuHint: '↑↓ navigate · Enter select · Esc dismiss',
+    slashMenuLoading: 'Loading skills…',
+    slashMenuEmpty: 'No matching skills',
+    slashMenuSearchPlaceholder: 'Search skills…',
+    useSkillDirective: 'Use the "{name}" skill: ',
     subtitle: 'Memory · Knowledge base · Skills · Automation — your personal AI operating surface',
     // Queue related
     queuedSending: 'Sending queued message...',
