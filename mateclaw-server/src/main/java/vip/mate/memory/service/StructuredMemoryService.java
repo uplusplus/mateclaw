@@ -54,6 +54,15 @@ public class StructuredMemoryService {
     /** Maximum number of entries injected by a single query-conditioned prefetch. */
     private static final int MAX_PREFETCH_ENTRIES = 6;
 
+    /**
+     * Appended to the prefetch block header when a {@code project}-type entry is
+     * included, i.e. the user's own current project was recalled for this turn.
+     * Downstream prompt assembly detects this marker to avoid also injecting
+     * knowledge-base reference context that would compete for "what project is
+     * this" — personal project memory is authoritative over reference articles.
+     */
+    public static final String PROJECT_RECALLED_MARKER = "includes the user's current project";
+
     /** Latin word tokens of length >= 2 used for relevance shingling. */
     private static final Pattern WORD_RE = Pattern.compile("[a-z0-9]{2,}");
 
@@ -249,7 +258,12 @@ public class StructuredMemoryService {
         List<ScoredEntry> scored = recallRelevant(agentId, userQuery, PREFETCH_TYPES, MAX_PREFETCH_ENTRIES);
         if (scored.isEmpty()) return "";
 
-        StringBuilder sb = new StringBuilder("## Relevant Structured Memory\n");
+        boolean hasProject = scored.stream().anyMatch(e -> "project".equals(e.type()));
+        StringBuilder sb = new StringBuilder("## Relevant Structured Memory");
+        if (hasProject) {
+            sb.append(" (").append(PROJECT_RECALLED_MARKER).append(")");
+        }
+        sb.append("\n");
         for (ScoredEntry e : scored) {
             sb.append("- **").append(e.key()).append("**: ")
                     .append(extractContentOnly(e.body()));

@@ -100,6 +100,36 @@ class StructuredMemoryPrefetchTest {
     }
 
     @Test
+    @DisplayName("prefetch marks the block when the user's own project is recalled (project type)")
+    void prefetchMarksProjectRecall() {
+        StructuredMemoryService svc = newService(
+                "## project_codename\n用户的项目代号叫\"天枢\"。\n> Source: agent | Updated: 2026-05-29",
+                null);
+
+        String block = svc.buildPrefetchBlock(AGENT_ID, "我的项目代号是什么?");
+
+        assertTrue(block.contains(StructuredMemoryService.PROJECT_RECALLED_MARKER),
+                "a project-type recall should carry the marker so wiki injection can be suppressed");
+    }
+
+    @Test
+    @DisplayName("prefetch does NOT mark the block for reference-only recall")
+    void prefetchNoMarkerForReferenceOnly() {
+        // Only a reference-type file is present; the project file is absent.
+        WorkspaceFileService files = mock(WorkspaceFileService.class);
+        when(files.getFile(eq(AGENT_ID), anyString())).thenReturn(null);
+        WorkspaceFileEntity ref = new WorkspaceFileEntity();
+        ref.setContent("## api_endpoint\n参考:订单查询接口 /api/orders。\n> Source: agent | Updated: 2026-05-29");
+        when(files.getFile(AGENT_ID, "structured/reference.md")).thenReturn(ref);
+        StructuredMemoryService svc = new StructuredMemoryService(files, mock(ApplicationEventPublisher.class));
+
+        String block = svc.buildPrefetchBlock(AGENT_ID, "订单查询接口参考是什么?");
+
+        assertFalse(block.contains(StructuredMemoryService.PROJECT_RECALLED_MARKER),
+                "reference-only recall must not claim a project so wiki context stays available");
+    }
+
+    @Test
     @DisplayName("prefetch returns empty for an unrelated question")
     void prefetchEmptyForUnrelatedQuery() {
         StructuredMemoryService svc = newService(
