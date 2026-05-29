@@ -32,7 +32,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -934,7 +933,14 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter implements Stre
                 || "audio".equals(messageType) || "media".equals(messageType);
         // Compute conversationId once — used as cache key for both write (cacheRecentFile)
         // and read (injectRecentFiles), and as the directory name under data/chat-uploads/.
-        String conversationId = buildConversationId(chatId, senderOpenId, isGroup);
+        // It MUST equal the id ChannelMessageRouter derives for this chat: the routed
+        // ChannelMessage carries chatId = (isGroup ? shortSuffix : null), so the router
+        // resolves it to feishu:{shortSuffix} for groups and feishu:{senderId} for DMs.
+        // ChatUploadResolver locates attachments under data/chat-uploads/{that id}/, and the
+        // prompt only exposes the file name (not its path) to the model — so if this id does
+        // not match, ReadFileTool / DocumentExtractTool cannot find the cached file.
+        String shortSuffix = generateShortSessionSuffix(chatId, senderOpenId, isGroup);
+        String conversationId = buildConversationId(shortSuffix, senderOpenId, isGroup);
 
         if (isFileMessage) {
             cacheRecentFile(messageId, messageType, contentStr, conversationId);
@@ -999,9 +1005,7 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter implements Stre
             textContent = injectRecentFiles(conversationId, contentParts, textContent);
         }
 
-        // 生成短会话后缀
-        String shortSuffix = generateShortSessionSuffix(chatId, senderOpenId, isGroup);
-
+        // shortSuffix already computed above (kept consistent with conversationId).
         ChannelMessage channelMessage = ChannelMessage.builder()
                 .messageId(messageId)
                 .channelType(CHANNEL_TYPE)
@@ -1400,13 +1404,16 @@ public class FeishuChannelAdapter extends AbstractChannelAdapter implements Stre
 
     /**
      * Compute the conversationId that {@link ChannelMessageRouter} would
-     * derive from the same chat/sender fields, so we can save inbound
-     * files to the matching {@code data/chat-uploads/} directory.
+     * derive for this chat, so we can save inbound files to the matching
+     * {@code data/chat-uploads/} directory.
+     *
+     * <p>The router derives the id from the routed {@link ChannelMessage},
+     * whose {@code chatId} is {@code (isGroup ? shortSuffix : null)} and whose
+     * {@code senderId} is the full open id. Mirror that exactly:
+     * {@code groups → feishu:{shortSuffix}}, {@code DMs → feishu:{senderOpenId}}.
      */
-    private String buildConversationId(String chatId, String senderOpenId, boolean isGroup) {
-        // Mirror ChannelMessageRouter#buildConversationId:
-        //   groups → feishu:{chatId},  DMs → feishu:{full senderOpenId}
-        String identifier = chatId != null ? chatId : senderOpenId;
+    private String buildConversationId(String shortSuffix, String senderOpenId, boolean isGroup) {
+        String identifier = isGroup ? shortSuffix : senderOpenId;
         return identifier != null ? CHANNEL_TYPE + ":" + identifier : null;
     }
 
