@@ -79,22 +79,24 @@ public class WikiTool {
     private WikiTransformationAggregator transformationAggregator;
 
     /**
-     * Per-agent pageType permission gate. When absent (e.g. in isolated unit
-     * tests), every page is readable — preserving pre-permission behaviour.
+     * Per-agent pageType permission gate. Mandatory: this is a security control,
+     * so it is a required constructor dependency rather than an optional bean —
+     * a missing gate must fail loudly at startup, never silently fail open.
      */
-    @Autowired(required = false)
-    private WikiPageTypePermissionService pageTypePermissionService;
+    private final WikiPageTypePermissionService pageTypePermissionService;
 
     public WikiTool(WikiPageService pageService,
                      WikiKnowledgeBaseService kbService,
                      WikiRawMaterialService rawService,
                      HybridRetriever hybridRetriever,
-                     ObjectMapper objectMapper) {
+                     ObjectMapper objectMapper,
+                     WikiPageTypePermissionService pageTypePermissionService) {
         this.pageService = pageService;
         this.kbService = kbService;
         this.rawService = rawService;
         this.hybridRetriever = hybridRetriever;
         this.objectMapper = objectMapper;
+        this.pageTypePermissionService = pageTypePermissionService;
     }
 
     // ==================== Knowledge-base discovery ====================
@@ -1054,12 +1056,12 @@ public class WikiTool {
 
     /**
      * Resolve the agent's pageType read/write permission view for a KB once,
-     * so a tool call can filter a whole result set without re-querying. Returns
-     * {@code null} when the permission service is absent (isolated unit tests),
-     * in which case all reads are allowed.
+     * so a tool call can filter a whole result set without re-querying. Never
+     * null — the service is a mandatory dependency, so there is no fail-open
+     * path; an agent with no rows still resolves to the KB's default policy.
      */
     private WikiPageTypePermissionService.Access pageTypeAccess(Long agentId, Long kbId) {
-        return pageTypePermissionService == null ? null : pageTypePermissionService.resolve(agentId, kbId);
+        return pageTypePermissionService.resolve(agentId, kbId);
     }
 
     /** Whether the resolved access permits reading {@code page}. Null-safe. */
@@ -1100,9 +1102,6 @@ public class WikiTool {
      */
     private String checkWrite(Long agentId, Long kbId, String pageType,
                               WikiPageTypePermissionService.WriteOp op) {
-        if (pageTypePermissionService == null) {
-            return null;
-        }
         WikiPageTypePermissionService.WriteDecision decision =
                 pageTypePermissionService.resolveWrite(agentId, kbId, pageType, op);
         String typeLabel = (pageType == null || pageType.isBlank()) ? "(default)" : pageType;

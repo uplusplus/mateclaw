@@ -2,7 +2,6 @@ package vip.mate.wiki.tool;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 import vip.mate.wiki.model.WikiAgentPageTypePermissionEntity;
 import vip.mate.wiki.model.WikiKnowledgeBaseEntity;
 import vip.mate.wiki.model.WikiPageEntity;
@@ -56,8 +55,7 @@ class WikiToolPermissionTest {
         WikiPageTypePermissionService permService =
                 new WikiPageTypePermissionService(permMapper, kbService, om);
 
-        WikiTool tool = new WikiTool(pageService, kbService, rawService, retriever, om);
-        ReflectionTestUtils.setField(tool, "pageTypePermissionService", permService);
+        WikiTool tool = new WikiTool(pageService, kbService, rawService, retriever, om, permService);
         return new Harness(tool, pageService, permMapper);
     }
 
