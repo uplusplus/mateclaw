@@ -72,6 +72,15 @@ public class WikiProperties {
     private long maxScanFileSize = 50 * 1024 * 1024;
 
     /**
+     * Allowed root directories for KB source directories. When non-empty, a
+     * configured source directory must resolve (after symlink resolution) to a
+     * path inside one of these roots, blocking arbitrary directory reads. Empty
+     * (the default) disables the containment check — suitable for desktop /
+     * single-tenant; server operators should set this.
+     */
+    private java.util.List<String> allowedSourceRoots = new java.util.ArrayList<>();
+
+    /**
      * Wiki LLM 重试最大尝试次数（含首次）。
      * <p>
      * RFC-012 M1：旧实现无最大次数，遇到 nginx 504 这种"反复瞬时"错误会永远重试。

@@ -21,6 +21,7 @@ import vip.mate.wiki.model.WikiPageTypeProfileEntity;
 import vip.mate.wiki.model.WikiRawMaterialEntity;
 import vip.mate.wiki.profile.WikiPageTypeProfileService;
 import vip.mate.wiki.service.WikiDirectoryScanService;
+import vip.mate.wiki.service.WikiSourcePathValidator;
 import vip.mate.wiki.service.WikiKnowledgeBaseService;
 import vip.mate.wiki.service.WikiLintJobService;
 import vip.mate.wiki.service.WikiPageService;
@@ -59,6 +60,7 @@ public class WikiController {
     private final WikiProgressBus progressBus;
     private final AuditEventService auditEventService;
     private final WikiPageTypeProfileService pageTypeProfileService;
+    private final WikiSourcePathValidator pathValidator;
     private final ObjectMapper objectMapper;
 
     // ==================== Knowledge Base ====================
@@ -274,6 +276,13 @@ public class WikiController {
                                        @RequestHeader(value = "X-Workspace-Id", required = false) Long workspaceId) {
         verifyKBWorkspace(id, workspaceId);
         String path = body.get("path");
+        if (path != null && !path.isBlank()) {
+            try {
+                pathValidator.validateDirectory(path);
+            } catch (IllegalArgumentException e) {
+                return R.fail(400, e.getMessage());
+            }
+        }
         kbService.updateSourceDirectory(id, path);
         return R.ok();
     }

@@ -29,6 +29,7 @@ public class WikiDirectoryScanService {
     private final WikiKnowledgeBaseService kbService;
     private final WikiRawMaterialService rawService;
     private final WikiProperties properties;
+    private final WikiSourcePathValidator pathValidator;
 
     private static final Set<String> SUPPORTED_EXTENSIONS = Set.of(
             "txt", "md", "csv", "pdf", "docx", "doc",
@@ -61,7 +62,14 @@ public class WikiDirectoryScanService {
      * 扫描指定目录，为每个支持的文件创建原始材料
      */
     public ScanResult scanDirectory(Long kbId, String directoryPath) {
-        Path dir = Paths.get(directoryPath).toAbsolutePath().normalize();
+        Path dir;
+        try {
+            // Canonicalize (resolving symlinks) and enforce allowed-roots so a
+            // scan cannot read outside the authorized area.
+            dir = pathValidator.validateDirectory(directoryPath);
+        } catch (IllegalArgumentException e) {
+            return new ScanResult(0, 0, 0, List.of(e.getMessage()));
+        }
 
         if (!Files.exists(dir)) {
             return new ScanResult(0, 0, 0, List.of("Directory does not exist: " + dir));
