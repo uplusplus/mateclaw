@@ -1454,6 +1454,11 @@ public class WikiProcessingService {
             pageService.mergeSourceLineage(created.getId(), rawId, raw.getTitle());
             log.info("[Wiki] Phase B create page slug='{}' done (created)", slug);
             citationService.buildCitationsAsync(created.getId(), kbId);
+            // Evaluate count-threshold pipeline triggers off-thread (page is now
+            // committed, so the count is accurate); no-op when no pipelines match.
+            if (eventPublisher != null && pageType != null && !pageType.isBlank()) {
+                eventPublisher.publishEvent(new vip.mate.wiki.event.WikiPageCreatedEvent(kbId, pageType));
+            }
             return true;
         } catch (org.springframework.dao.DuplicateKeyException e) {
             // Fallback 2: concurrent INSERT race — degrade to update
