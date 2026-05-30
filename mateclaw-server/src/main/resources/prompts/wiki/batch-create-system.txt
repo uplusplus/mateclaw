@@ -50,4 +50,8 @@
 - `title`：与 metadata 保持一致；如有更精确的描述可微调
 - `content`：完整 markdown 正文
 - `summary`：一段话简短摘要
-- `page_type`：页面类型，从以下值中选一个：concept / person / place / event / technology / organization / product / term / process / other
+- `page_type`：页面类型，从下面"允许的页面类型"列表中选一个；都不合适时选 concept。
+- `metadata`（可选）：与所选 page_type 对应的结构化字段对象，只输出该类型声明的字段（带"required metadata"标注的字段应尽量补全）。
+
+允许的页面类型：
+{allowed_page_types}

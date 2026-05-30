@@ -79,4 +79,29 @@ class WikiPageTypeProfileServiceTest {
         assertEquals("concept", service.normalizePageType(1L, "made-up-type"));
         assertEquals("concept", service.normalizePageType(1L, null));
     }
+
+    @Test
+    void describeForPrompt_defaultProfile_listsBuiltInTypes() {
+        when(mapper.selectOne(any())).thenReturn(null);
+        String fragment = service.describeForPrompt(1L);
+        assertTrue(fragment.contains("- concept"), fragment);
+        assertTrue(fragment.contains("- person"), fragment);
+        assertTrue(fragment.contains("- other"), fragment);
+    }
+
+    @Test
+    void describeForPrompt_customProfile_showsRequiredMetadata() {
+        WikiPageTypeProfileEntity row = new WikiPageTypeProfileEntity();
+        row.setKbId(1L);
+        row.setEnabled(1);
+        row.setConfigJson("{\"pageTypes\":{\"episode\":{\"description\":\"a dated event\","
+                + "\"schema\":{\"event_date\":{\"type\":\"date\",\"required\":true},"
+                + "\"note\":{\"type\":\"string\",\"required\":false}}}}}");
+        when(mapper.selectOne(any())).thenReturn(row);
+
+        String fragment = service.describeForPrompt(1L);
+        assertTrue(fragment.contains("- episode: a dated event"), fragment);
+        assertTrue(fragment.contains("required metadata: event_date"), fragment);
+        assertFalse(fragment.contains("note"), fragment);  // optional field not listed as required
+    }
 }

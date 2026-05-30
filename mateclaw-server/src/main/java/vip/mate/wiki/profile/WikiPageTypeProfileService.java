@@ -10,6 +10,7 @@ import vip.mate.wiki.model.WikiPageTypeProfileEntity;
 import vip.mate.wiki.repository.WikiPageTypeProfileMapper;
 
 import java.io.InputStream;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -87,6 +88,35 @@ public class WikiPageTypeProfileService {
     /** The set of pageType names allowed for a KB (lowercase). */
     public Set<String> allowedPageTypes(Long kbId) {
         return resolveProfile(kbId).getPageTypes().keySet();
+    }
+
+    /**
+     * Render the KB's allowed page types as a prompt fragment, one per line
+     * with description and required-metadata hints, e.g.
+     * {@code - episode: a dated event (required metadata: event_type, event_date)}.
+     * Injected into the route / batch-create prompts so the LLM only emits
+     * types the KB recognises.
+     */
+    public String describeForPrompt(Long kbId) {
+        WikiPageTypeProfile profile = resolveProfile(kbId);
+        StringBuilder sb = new StringBuilder();
+        profile.getPageTypes().forEach((name, def) -> {
+            sb.append("- ").append(name);
+            if (def != null && def.getDescription() != null && !def.getDescription().isBlank()) {
+                sb.append(": ").append(def.getDescription().trim());
+            }
+            if (def != null && def.getSchema() != null) {
+                java.util.List<String> required = def.getSchema().entrySet().stream()
+                        .filter(e -> e.getValue() != null && e.getValue().isRequired())
+                        .map(Map.Entry::getKey)
+                        .toList();
+                if (!required.isEmpty()) {
+                    sb.append(" (required metadata: ").append(String.join(", ", required)).append(")");
+                }
+            }
+            sb.append('\n');
+        });
+        return sb.toString().trim();
     }
 
     /** The enabled profile row for a KB, or {@code null} when none configured. */

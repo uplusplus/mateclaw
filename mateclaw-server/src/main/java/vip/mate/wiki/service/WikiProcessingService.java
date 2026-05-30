@@ -63,6 +63,14 @@ public class WikiProcessingService {
     private final org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     /**
+     * Optional KB pageType profile. Field-injected (not a constructor arg) so
+     * existing instantiations are unaffected; when absent the batch-create
+     * prompt falls back to the legacy hardcoded pageType enum.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private vip.mate.wiki.profile.WikiPageTypeProfileService pageTypeProfileService;
+
+    /**
      * Read-the-failover-chain handle. Optional so the existing constructors and
      * lazy-mode tests don't have to thread a new dependency. When null, the
      * fallback hop iterates {@code listEnabledModels} in DB order — same
@@ -1065,6 +1073,16 @@ public class WikiProcessingService {
             metasJson.append("]");
 
             String batchSystem = PromptLoader.loadPrompt("wiki/batch-create-system");
+            if (pageTypeProfileService != null) {
+                // Inject the KB's allowed page types so the LLM only emits types
+                // the profile recognises. Default-profile KBs get the same list
+                // as the previous hardcoded enum, so behaviour is unchanged.
+                batchSystem = batchSystem.replace("{allowed_page_types}",
+                        pageTypeProfileService.describeForPrompt(kbId));
+            } else {
+                batchSystem = batchSystem.replace("{allowed_page_types}",
+                        "concept / person / place / event / technology / organization / product / term / process / other");
+            }
             String batchUserTemplate = PromptLoader.loadPrompt("wiki/batch-create-user");
             String docMapSection = buildDocumentMapSection(documentMap);
             String batchUser = batchUserTemplate
