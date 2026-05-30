@@ -142,7 +142,8 @@ public class WikiRawMaterialService {
                 return false; // unchanged — addFile not called, avoids a second read
             }
         }
-        addFile(kbId, title, sourceType, absolutePath, fileSize);
+        // Pass the hash we already computed so addFile does not re-read the file.
+        addFile(kbId, title, sourceType, null, absolutePath, fileSize, hash);
         return true;
     }
 
@@ -227,6 +228,19 @@ public class WikiRawMaterialService {
     @Transactional
     public WikiRawMaterialEntity addFile(Long kbId, String title, String sourceType,
                                           String mimeType, String sourcePath, long fileSize) {
+        return addFile(kbId, title, sourceType, mimeType, sourcePath, fileSize, null);
+    }
+
+    /**
+     * As {@link #addFile(Long, String, String, String, String, long)}, but with
+     * an optional precomputed content hash so a caller that already read the
+     * file (e.g. the directory scan's change detection) does not pay a second
+     * full-file read to dedup.
+     */
+    @Transactional
+    public WikiRawMaterialEntity addFile(Long kbId, String title, String sourceType,
+                                          String mimeType, String sourcePath, long fileSize,
+                                          String precomputedHash) {
         WikiRawMaterialEntity entity = new WikiRawMaterialEntity();
         entity.setKbId(kbId);
         entity.setTitle(title);
@@ -240,11 +254,15 @@ public class WikiRawMaterialService {
         // directly — the previous `new String(bytes, UTF_8)` round-trip produced unstable
         // hashes for binary files (PDF/Office) because invalid UTF-8 sequences become
         // replacement characters, collapsing distinct files into the same hash.
-        try {
-            byte[] bytes = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(sourcePath));
-            entity.setContentHash(computeHashOfBytes(bytes));
-        } catch (Exception e) {
-            log.warn("[Wiki] Could not compute file hash for dedup: {}", e.getMessage());
+        if (precomputedHash != null) {
+            entity.setContentHash(precomputedHash);
+        } else {
+            try {
+                byte[] bytes = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(sourcePath));
+                entity.setContentHash(computeHashOfBytes(bytes));
+            } catch (Exception e) {
+                log.warn("[Wiki] Could not compute file hash for dedup: {}", e.getMessage());
+            }
         }
 
         // Dedup: reuse any existing row with the same hash in this KB (any status)

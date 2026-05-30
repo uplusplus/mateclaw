@@ -148,14 +148,35 @@ public class WikiDirectoryScanService {
                     skipped++;
                     continue;
                 }
-                String absolutePath = file.toAbsolutePath().normalize().toString();
+                // From here on operate ONLY on the resolved real path, never the
+                // original entry. Reading `realFile` (a concrete, fully-resolved
+                // path) closes the TOCTOU window: swapping the symlink after
+                // resolution cannot redirect the read. The file name for the
+                // title still comes from the directory entry the user sees.
+                // Re-check the size on the resolved target — walkFileTree does
+                // not follow links, so a symlink's attribute size (the link
+                // length) can slip an oversized target past the visitFile gate.
+                long realSize;
+                try {
+                    realSize = Files.size(realFile);
+                } catch (IOException e) {
+                    errors.add("Failed to stat: " + file.getFileName() + " (" + e.getMessage() + ")");
+                    skipped++;
+                    continue;
+                }
+                if (realSize > properties.getMaxScanFileSize()) {
+                    errors.add("Skipped oversized file: " + file.getFileName() + " (" + realSize + " bytes)");
+                    skipped++;
+                    continue;
+                }
+                String absolutePath = realFile.toString();
                 String fileName = file.getFileName().toString();
                 String ext = getExtension(fileName);
 
                 if (TEXT_EXTENSIONS.contains(ext)) {
                     // Text files: dedup by content hash, so an unchanged file is
                     // skipped while a modified file (new hash) is re-ingested.
-                    String content = Files.readString(file, StandardCharsets.UTF_8);
+                    String content = Files.readString(realFile, StandardCharsets.UTF_8);
                     boolean fresh = rawService.ingestTextFileFromScan(kbId, fileName, absolutePath, content);
                     if (fresh) {
                         added++;
@@ -177,7 +198,7 @@ public class WikiDirectoryScanService {
                     default -> "text";
                 };
                 boolean freshBinary = rawService.ingestBinaryFileFromScan(
-                        kbId, fileName, sourceType, absolutePath, Files.size(file));
+                        kbId, fileName, sourceType, absolutePath, realSize);
                 if (freshBinary) {
                     added++;
                 } else {
