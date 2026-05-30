@@ -450,6 +450,14 @@ public class WikiTool {
         if (kbRes.hasError()) return kbRes.errorJson();
         kbId = kbRes.kbId();
 
+        // wiki_create_page does not take an explicit pageType, so creation is
+        // governed by the agent's wildcard ('*') write rule for this KB.
+        String createErr = checkWrite(agentId, kbId, null,
+                WikiPageTypePermissionService.WriteOp.CREATE);
+        if (createErr != null) {
+            return createErr;
+        }
+
         String slug = title.toLowerCase()
                 .replaceAll("[^a-z0-9\\u4e00-\\u9fff]+", "-")
                 .replaceAll("^-|-$", "");
@@ -500,6 +508,12 @@ public class WikiTool {
         if (kbRes.hasError()) return kbRes.errorJson();
         kbId = kbRes.kbId();
         if (compileService == null) return error("Compile service not available");
+
+        String compileErr = checkWrite(agentId, kbId, null,
+                WikiPageTypePermissionService.WriteOp.CREATE);
+        if (compileErr != null) {
+            return compileErr;
+        }
 
         try {
             WikiCompileService.CompileResult res = compileService.compilePage(kbId, topic, slug, maxEvidenceChunks);
@@ -613,6 +627,19 @@ public class WikiTool {
         KbResolution kbRes = resolveKb(agentId, kbName, kbId);
         if (kbRes.hasError()) return kbRes.errorJson();
         kbId = kbRes.kbId();
+        // Archiving toggles visibility — gate it as an update, and hide pages
+        // whose type the agent cannot read.
+        WikiPageEntity target = pageService.getBySlug(kbId, slug);
+        if (target != null) {
+            if (!canRead(pageTypeAccess(agentId, kbId), target)) {
+                return error("Page not found: " + slug);
+            }
+            String writeErr = checkWrite(agentId, kbId, target.getPageType(),
+                    WikiPageTypePermissionService.WriteOp.UPDATE);
+            if (writeErr != null) {
+                return writeErr;
+            }
+        }
         boolean changed;
         try {
             changed = pageService.setArchived(kbId, slug, archive);
@@ -647,6 +674,15 @@ public class WikiTool {
         WikiPageEntity page = pageService.getBySlug(kbId, slug);
         if (page == null) {
             return error("Page not found: " + slug);
+        }
+        // Unreadable page types must not even be discoverable as delete targets.
+        if (!canRead(pageTypeAccess(agentId, kbId), page)) {
+            return error("Page not found: " + slug);
+        }
+        String writeErr = checkWrite(agentId, kbId, page.getPageType(),
+                WikiPageTypePermissionService.WriteOp.DELETE);
+        if (writeErr != null) {
+            return writeErr;
         }
 
         if ("manual".equals(page.getLastUpdatedBy())) {
@@ -763,6 +799,14 @@ public class WikiTool {
 
         WikiPageEntity page = pageService.getBySlug(kbId, slug);
         if (page == null) return error("Page not found: " + slug);
+        if (!canRead(pageTypeAccess(agentId, kbId), page)) {
+            return error("Page not found: " + slug);
+        }
+        String enrichErr = checkWrite(agentId, kbId, page.getPageType(),
+                WikiPageTypePermissionService.WriteOp.UPDATE);
+        if (enrichErr != null) {
+            return enrichErr;
+        }
 
         Long rawId = 0L;
         try {
@@ -829,6 +873,13 @@ public class WikiTool {
             return error("Transformations not available");
         }
 
+        // A transformation persists a synthesis run/page — gate as a create.
+        String txErr = checkWrite(agentId, kbId, null,
+                WikiPageTypePermissionService.WriteOp.CREATE);
+        if (txErr != null) {
+            return txErr;
+        }
+
         WikiKnowledgeBaseEntity kb = kbService.getById(kbId);
         Long wsId = (kb == null || kb.getWorkspaceId() == null) ? 1L : kb.getWorkspaceId();
 
@@ -879,6 +930,15 @@ public class WikiTool {
 
         WikiPageEntity page = pageService.getBySlug(kbId, slug);
         if (page == null) return error("Page not found: " + slug);
+        if (!canRead(pageTypeAccess(agentId, kbId), page)) {
+            return error("Page not found: " + slug);
+        }
+        // Reads the source page and persists a derived run — gate as a create.
+        String txErr = checkWrite(agentId, kbId, null,
+                WikiPageTypePermissionService.WriteOp.CREATE);
+        if (txErr != null) {
+            return txErr;
+        }
 
         WikiKnowledgeBaseEntity kb = kbService.getById(kbId);
         Long wsId = (kb == null || kb.getWorkspaceId() == null) ? 1L : kb.getWorkspaceId();
@@ -926,6 +986,13 @@ public class WikiTool {
         kbId = kbRes.kbId();
         if (transformationService == null || transformationAggregator == null) {
             return error("Transformations not available");
+        }
+
+        // Aggregation upserts a synthesis page — gate as a create.
+        String aggErr = checkWrite(agentId, kbId, null,
+                WikiPageTypePermissionService.WriteOp.CREATE);
+        if (aggErr != null) {
+            return aggErr;
         }
 
         WikiKnowledgeBaseEntity kb = kbService.getById(kbId);
@@ -1000,6 +1067,44 @@ public class WikiTool {
     /** Whether the resolved access permits reading a page of {@code pageType}. Null-safe. */
     private boolean canRead(WikiPageTypePermissionService.Access access, String pageType) {
         return access == null || access.canRead(pageType);
+    }
+
+    /**
+     * Gate a write/mutate operation by pageType permission. Returns an error
+     * JSON string to short-circuit the tool when the write is not permitted, or
+     * {@code null} when it may proceed. Null-safe: when the permission service
+     * is absent, every write is allowed (pre-permission behaviour).
+     *
+     * <p>{@code APPROVAL_REQUIRED} currently fails closed with an explanatory
+     * message rather than opening a pending approval — the deferred
+     * approve-then-execute flow needs a conversation context the wiki tools do
+     * not yet receive. The permission row still records the intent so the
+     * deferred flow can be wired later without a schema change.
+     */
+    private String checkWrite(Long agentId, Long kbId, String pageType,
+                              WikiPageTypePermissionService.WriteOp op) {
+        if (pageTypePermissionService == null) {
+            return null;
+        }
+        WikiPageTypePermissionService.WriteDecision decision =
+                pageTypePermissionService.resolveWrite(agentId, kbId, pageType, op);
+        String typeLabel = (pageType == null || pageType.isBlank()) ? "(default)" : pageType;
+        return switch (decision) {
+            case ALLOW -> null;
+            case DENY -> {
+                log.info("[WikiTool] write denied by pageType permission: agent={} kb={} type={} op={}",
+                        agentId, kbId, pageType, op);
+                yield error("Not permitted: this agent may not " + op.name().toLowerCase()
+                        + " '" + typeLabel + "' pages in this knowledge base.");
+            }
+            case APPROVAL_REQUIRED -> {
+                log.info("[WikiTool] write requires approval (blocked): agent={} kb={} type={} op={}",
+                        agentId, kbId, pageType, op);
+                yield error("Approval required: " + op.name().toLowerCase() + " of '" + typeLabel
+                        + "' pages in this knowledge base needs administrator approval. "
+                        + "The operation was NOT performed.");
+            }
+        };
     }
 
     /**
