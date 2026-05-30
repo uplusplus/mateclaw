@@ -81,6 +81,17 @@ public class WikiProperties {
     private java.util.List<String> allowedSourceRoots = new java.util.ArrayList<>();
 
     /**
+     * When {@code true}, a scheduled job (single-owner via ShedLock) scans each
+     * KB's configured source directory and auto-ingests new files. Off by
+     * default — operators opt in. Existing dedup by source path keeps re-scans
+     * idempotent; deletes are never propagated.
+     */
+    private boolean watcherEnabled = false;
+
+    /** Interval between watcher scan cycles, milliseconds. Default 5 minutes. */
+    private long watcherIntervalMs = 300_000;
+
+    /**
      * Wiki LLM 重试最大尝试次数（含首次）。
      * <p>
      * RFC-012 M1：旧实现无最大次数，遇到 nginx 504 这种"反复瞬时"错误会永远重试。

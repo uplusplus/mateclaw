@@ -86,6 +86,20 @@ public class WikiRawMaterialService {
                         .eq(WikiRawMaterialEntity::getSourcePath, sourcePath));
     }
 
+    /**
+     * Record the originating file path on a raw material via a partial update,
+     * so a later directory re-scan can dedup it by source path. Used for
+     * text-file imports, which otherwise carry no path.
+     */
+    public void updateSourcePath(Long rawId, String sourcePath) {
+        if (rawId == null) {
+            return;
+        }
+        rawMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<WikiRawMaterialEntity>()
+                .eq(WikiRawMaterialEntity::getId, rawId)
+                .set(WikiRawMaterialEntity::getSourcePath, sourcePath));
+    }
+
     public List<WikiRawMaterialEntity> listPending(Long kbId) {
         return rawMapper.selectList(
                 new LambdaQueryWrapper<WikiRawMaterialEntity>()

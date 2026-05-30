@@ -145,9 +145,12 @@ public class WikiDirectoryScanService {
                 }
 
                 if (TEXT_EXTENSIONS.contains(ext)) {
-                    // 文本文件：读取内容
+                    // 文本文件：读取内容；记录 source path 以便重复扫描去重
                     String content = Files.readString(file, StandardCharsets.UTF_8);
-                    rawService.addText(kbId, fileName, content);
+                    WikiRawMaterialEntity textRaw = rawService.addText(kbId, fileName, content);
+                    if (textRaw != null) {
+                        rawService.updateSourcePath(textRaw.getId(), absolutePath);
+                    }
                 } else {
                     // 二进制文件：直接引用原始路径，不复制
                     String sourceType = switch (ext) {
