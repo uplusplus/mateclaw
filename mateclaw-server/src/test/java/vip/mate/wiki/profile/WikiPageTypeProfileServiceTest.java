@@ -90,6 +90,27 @@ class WikiPageTypeProfileServiceTest {
     }
 
     @Test
+    void stageInstructionAndTemplate_areResolvedPerType() {
+        WikiPageTypeProfileEntity row = new WikiPageTypeProfileEntity();
+        row.setKbId(1L);
+        row.setEnabled(1);
+        row.setConfigJson("{\"pageTypes\":{\"episode\":{"
+                + "\"route\":{\"instructions\":\"仅当有明确日期时路由为 episode\"},"
+                + "\"merge\":{\"instructions\":\"保留已审阅分析,追加新证据\"},"
+                + "\"create\":{\"instructions\":\"抽取 event_date\"},"
+                + "\"template\":{\"markdown\":\"## Summary\\n{{summary}}\\n## 事件\"}}}}");
+        when(mapper.selectOne(any())).thenReturn(row);
+
+        assertTrue(service.stageInstruction(1L, "episode", "route").contains("明确日期"));
+        assertTrue(service.stageInstruction(1L, "episode", "merge").contains("已审阅"));
+        assertTrue(service.stageInstruction(1L, "episode", "create").contains("event_date"));
+        assertTrue(service.templateMarkdown(1L, "episode").contains("## Summary"));
+        // unknown type / stage → empty, never null
+        assertEquals("", service.stageInstruction(1L, "nope", "route"));
+        assertEquals("", service.templateMarkdown(1L, "nope"));
+    }
+
+    @Test
     void describeForPrompt_customProfile_showsRequiredMetadata() {
         WikiPageTypeProfileEntity row = new WikiPageTypeProfileEntity();
         row.setKbId(1L);

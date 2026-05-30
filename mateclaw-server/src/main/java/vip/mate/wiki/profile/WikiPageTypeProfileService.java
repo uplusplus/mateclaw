@@ -91,6 +91,56 @@ public class WikiPageTypeProfileService {
     }
 
     /**
+     * The per-stage LLM instruction declared for a pageType, or empty string.
+     * {@code stage} is {@code route} / {@code create} / {@code merge}. Used to
+     * inject type-specific guidance into the corresponding stage prompt.
+     */
+    public String stageInstruction(Long kbId, String pageType, String stage) {
+        WikiPageTypeDef def = resolveProfile(kbId).get(pageType);
+        if (def == null || stage == null) {
+            return "";
+        }
+        WikiPageTypeDef.StageInstructions si = switch (stage) {
+            case "route" -> def.getRoute();
+            case "create" -> def.getCreate();
+            case "merge" -> def.getMerge();
+            default -> null;
+        };
+        return (si != null && si.getInstructions() != null) ? si.getInstructions().trim() : "";
+    }
+
+    /**
+     * Render the per-type Markdown templates as a prompt block for the
+     * multi-page batch-create stage (where one call generates pages of several
+     * types). Only types that declare a template are listed; empty when none.
+     */
+    public String describeTemplatesForPrompt(Long kbId) {
+        WikiPageTypeProfile profile = resolveProfile(kbId);
+        StringBuilder sb = new StringBuilder();
+        profile.getPageTypes().forEach((name, def) -> {
+            if (def != null && def.getTemplate() != null
+                    && def.getTemplate().getMarkdown() != null
+                    && !def.getTemplate().getMarkdown().isBlank()) {
+                sb.append("### ").append(name).append(" 骨架\n")
+                  .append(def.getTemplate().getMarkdown().trim()).append("\n\n");
+            }
+        });
+        return sb.toString().trim();
+    }
+
+    /**
+     * The Markdown content template for a pageType, or empty string. Injected
+     * into the generation prompt so the page follows the declared skeleton.
+     */
+    public String templateMarkdown(Long kbId, String pageType) {
+        WikiPageTypeDef def = resolveProfile(kbId).get(pageType);
+        if (def == null || def.getTemplate() == null || def.getTemplate().getMarkdown() == null) {
+            return "";
+        }
+        return def.getTemplate().getMarkdown().trim();
+    }
+
+    /**
      * Render the KB's allowed page types as a prompt fragment, one per line
      * with description and required-metadata hints, e.g.
      * {@code - episode: a dated event (required metadata: event_type, event_date)}.

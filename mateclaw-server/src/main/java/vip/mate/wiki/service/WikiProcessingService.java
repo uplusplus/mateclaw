@@ -813,7 +813,8 @@ public class WikiProcessingService {
         // this picks up changes from sequential chunks without an extra DB hit when nothing changed.
         String freshIndex = buildExistingPagesIndex(kbId);
 
-        String routeSystem = PromptLoader.loadPrompt("wiki/route-system");
+        String routeSystem = PromptLoader.loadPrompt("wiki/route-system")
+                .replace("{allowed_page_types}", allowedTypesFragment(kbId));
         String routeUserTemplate = PromptLoader.loadPrompt("wiki/route-user");
         String documentMapSection = buildDocumentMapSection(documentMap);
         String routeUser = routeUserTemplate
@@ -1082,10 +1083,13 @@ public class WikiProcessingService {
                 // the profile recognises. Default-profile KBs get the same list
                 // as the previous hardcoded enum, so behaviour is unchanged.
                 batchSystem = batchSystem.replace("{allowed_page_types}",
-                        pageTypeProfileService.describeForPrompt(kbId));
+                        pageTypeProfileService.describeForPrompt(kbId))
+                        .replace("{page_type_templates}",
+                                emptyOr(pageTypeProfileService.describeTemplatesForPrompt(kbId)));
             } else {
                 batchSystem = batchSystem.replace("{allowed_page_types}",
-                        "concept / person / place / event / technology / organization / product / term / process / other");
+                        "concept / person / place / event / technology / organization / product / term / process / other")
+                        .replace("{page_type_templates}", "(无)");
             }
             String batchUserTemplate = PromptLoader.loadPrompt("wiki/batch-create-user");
             String docMapSection = buildDocumentMapSection(documentMap);
@@ -1264,7 +1268,9 @@ public class WikiProcessingService {
         String title = pageMeta.path("title").asText("");
         String summary = pageMeta.path("summary").asText("");
         String configContent = kb.getConfigContent() != null ? kb.getConfigContent() : "";
-        String createSystem = PromptLoader.loadPrompt("wiki/create-page-system");
+        String createSystem = PromptLoader.loadPrompt("wiki/create-page-system")
+                .replace("{page_type_instructions}",
+                        typeGuidance(kb.getId(), pageMeta.path("page_type").asText(""), "create"));
         String createUserTemplate = PromptLoader.loadPrompt("wiki/create-page-user");
         String createUser = createUserTemplate
                 .replace("{config}", configContent)
@@ -1492,6 +1498,38 @@ public class WikiProcessingService {
         }
     }
 
+    private String emptyOr(String s) {
+        return (s == null || s.isBlank()) ? "(无)" : s;
+    }
+
+    /** Allowed page types fragment for prompt injection (profile-driven; legacy fallback). */
+    private String allowedTypesFragment(Long kbId) {
+        return pageTypeProfileService != null
+                ? pageTypeProfileService.describeForPrompt(kbId)
+                : "concept / person / place / event / technology / organization / product / term / process / other";
+    }
+
+    /**
+     * Per-type guidance for the create / merge prompts: the stage instruction
+     * plus, for the create stage, the Markdown template skeleton. Empty-safe.
+     */
+    private String typeGuidance(Long kbId, String pageType, String stage) {
+        if (pageTypeProfileService == null || pageType == null || pageType.isBlank()) {
+            return "(无特定指引)";
+        }
+        String instr = pageTypeProfileService.stageInstruction(kbId, pageType, stage);
+        String tpl = "create".equals(stage) ? pageTypeProfileService.templateMarkdown(kbId, pageType) : "";
+        StringBuilder sb = new StringBuilder();
+        if (instr != null && !instr.isBlank()) {
+            sb.append(instr);
+        }
+        if (tpl != null && !tpl.isBlank()) {
+            if (sb.length() > 0) sb.append("\n\n");
+            sb.append("请按以下 Markdown 骨架组织正文:\n").append(tpl);
+        }
+        return sb.length() == 0 ? "(无特定指引)" : sb.toString();
+    }
+
     private void applyValidatedMetadata(Long pageId, Long kbId, String pageType,
                                         JsonNode metadataNode) {
         if (pageId == null || pageTypeProfileService == null || metadataValidator == null) {
@@ -1546,7 +1584,9 @@ public class WikiProcessingService {
         }
 
         String configContent = kb.getConfigContent() != null ? kb.getConfigContent() : "";
-        String mergeSystem = PromptLoader.loadPrompt("wiki/merge-page-system");
+        String mergeSystem = PromptLoader.loadPrompt("wiki/merge-page-system")
+                .replace("{page_type_merge_instruction}",
+                        typeGuidance(kbId, existing.getPageType(), "merge"));
         // Trim existing content to prevent context overflow on small models (qwen-turbo: 4096 tokens).
         // Merging a 3000-char page + 30K chunk blows past the limit → truncated JSON → parse failure.
         // 1800 chars ≈ ~600 tokens, leaving ample room for the chunk and response.
@@ -2348,7 +2388,9 @@ public class WikiProcessingService {
         // Use existing two-phase single-page create logic
         String existingPagesIndex = buildExistingPagesIndex(kb.getId());
         String configContent = kb.getConfigContent() != null ? kb.getConfigContent() : "";
-        String createSystem = PromptLoader.loadPrompt("wiki/create-page-system");
+        String createSystem = PromptLoader.loadPrompt("wiki/create-page-system")
+                .replace("{page_type_instructions}",
+                        typeGuidance(kb.getId(), page.getPageType(), "create"));
         String createUserTemplate = PromptLoader.loadPrompt("wiki/create-page-user");
         String createUser = createUserTemplate
                 .replace("{config}", configContent)

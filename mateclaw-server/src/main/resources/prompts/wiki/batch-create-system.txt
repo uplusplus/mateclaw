@@ -55,3 +55,6 @@
 
 允许的页面类型：
 {allowed_page_types}
+
+各类型内容模板(若某页的 page_type 有对应骨架,请按骨架组织正文;无则自由组织)：
+{page_type_templates}
