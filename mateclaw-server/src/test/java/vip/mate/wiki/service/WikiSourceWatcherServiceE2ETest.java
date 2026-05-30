@@ -88,6 +88,21 @@ class WikiSourceWatcherServiceE2ETest {
     }
 
     @Test
+    void modifiedBinaryFile_isReingested(@TempDir Path sourceDir) throws java.io.IOException {
+        Path pdf = sourceDir.resolve("doc.pdf");
+        Files.write(pdf, "PDF-VERSION-ONE-bytes".getBytes());
+        long kb = SEQ.incrementAndGet();
+
+        assertEquals(1, scanService.scanDirectory(kb, sourceDir.toString()).added());
+        // Unchanged binary re-scan ingests nothing.
+        assertEquals(0, scanService.scanDirectory(kb, sourceDir.toString()).added());
+        // Changed bytes -> different content hash -> re-ingested.
+        Files.write(pdf, "PDF-VERSION-TWO-different-bytes".getBytes());
+        assertEquals(1, scanService.scanDirectory(kb, sourceDir.toString()).added(),
+                "a modified binary file must be re-ingested");
+    }
+
+    @Test
     void kbsWithoutSourceDirectory_areSkipped() {
         // A KB with no source directory must not cause errors in the cycle.
         kbService.create("nodir-" + SEQ.incrementAndGet(), "test", null);

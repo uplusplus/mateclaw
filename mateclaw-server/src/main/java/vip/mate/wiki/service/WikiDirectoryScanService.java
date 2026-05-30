@@ -165,14 +165,9 @@ public class WikiDirectoryScanService {
                     continue;
                 }
 
-                // Binary files: dedup by source path. Re-ingest on content change
-                // is not detected here (hashing large binaries each scan is
-                // expensive) — modified binaries should be re-uploaded explicitly.
-                WikiRawMaterialEntity existing = rawService.findBySourcePath(kbId, absolutePath);
-                if (existing != null) {
-                    skipped++;
-                    continue;
-                }
+                // Binary files: dedup by content hash too, so a modified file is
+                // re-ingested. The unchanged case reads the file once to hash it;
+                // only a new/changed file is read again to import.
                 String sourceType = switch (ext) {
                     case "pdf" -> "pdf";
                     case "docx", "doc" -> "docx";
@@ -181,8 +176,13 @@ public class WikiDirectoryScanService {
                     case "html", "htm" -> "html";
                     default -> "text";
                 };
-                rawService.addFile(kbId, fileName, sourceType, absolutePath, Files.size(file));
-                added++;
+                boolean freshBinary = rawService.ingestBinaryFileFromScan(
+                        kbId, fileName, sourceType, absolutePath, Files.size(file));
+                if (freshBinary) {
+                    added++;
+                } else {
+                    skipped++;
+                }
 
             } catch (Exception e) {
                 errors.add("Failed to import: " + file.getFileName() + " (" + e.getMessage() + ")");

@@ -116,6 +116,37 @@ public class WikiRawMaterialService {
     }
 
     /**
+     * Import a binary file discovered by a directory scan, detecting content
+     * changes by hashing the bytes: unchanged content (a raw with the same hash
+     * exists) is skipped, while changed content is re-ingested via
+     * {@link #addFile}. The unchanged case reads the file once; only a
+     * new/changed file is read again by addFile.
+     *
+     * @return {@code true} when newly ingested, {@code false} when unchanged
+     */
+    public boolean ingestBinaryFileFromScan(Long kbId, String title, String sourceType,
+                                            String absolutePath, long fileSize) {
+        String hash = null;
+        try {
+            hash = computeHashOfBytes(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(absolutePath)));
+        } catch (Exception e) {
+            log.warn("[Wiki] Could not hash file for change detection: {}", e.getMessage());
+        }
+        if (hash != null) {
+            WikiRawMaterialEntity sameContent = rawMapper.selectOne(
+                    new LambdaQueryWrapper<WikiRawMaterialEntity>()
+                            .eq(WikiRawMaterialEntity::getKbId, kbId)
+                            .eq(WikiRawMaterialEntity::getContentHash, hash)
+                            .last("LIMIT 1"));
+            if (sameContent != null) {
+                return false; // unchanged — addFile not called, avoids a second read
+            }
+        }
+        addFile(kbId, title, sourceType, absolutePath, fileSize);
+        return true;
+    }
+
+    /**
      * Record the originating file path on a raw material via a partial update,
      * so a later directory re-scan can dedup it by source path. Used for
      * text-file imports, which otherwise carry no path.
