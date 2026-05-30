@@ -368,6 +368,16 @@ public class WikiPageService {
                 .set(WikiPageEntity::getProfileVersion, profileVersion));
     }
 
+    /** Set only a page's knowledge layer via a partial update (leaves depends_on untouched). */
+    public void setKnowledgeLayer(Long pageId, String knowledgeLayer) {
+        if (pageId == null || knowledgeLayer == null) {
+            return;
+        }
+        pageMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<WikiPageEntity>()
+                .eq(WikiPageEntity::getId, pageId)
+                .set(WikiPageEntity::getKnowledgeLayer, knowledgeLayer));
+    }
+
     /** Set a page's knowledge layer and depends-on snapshot via a partial update. */
     public void setLayerAndDependencies(Long pageId, String knowledgeLayer, String dependsOnJson) {
         if (pageId == null) {

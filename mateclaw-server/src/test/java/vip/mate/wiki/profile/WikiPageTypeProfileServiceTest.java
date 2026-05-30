@@ -8,6 +8,7 @@ import vip.mate.wiki.repository.WikiPageTypeProfileMapper;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -87,6 +88,26 @@ class WikiPageTypeProfileServiceTest {
         assertTrue(fragment.contains("- concept"), fragment);
         assertTrue(fragment.contains("- person"), fragment);
         assertTrue(fragment.contains("- other"), fragment);
+    }
+
+    @Test
+    void resolveLayer_defaultsKnownTypesToFact_experienceWhenDeclared() {
+        WikiPageTypeProfileEntity row = new WikiPageTypeProfileEntity();
+        row.setKbId(1L);
+        row.setEnabled(1);
+        row.setConfigJson("{\"pageTypes\":{"
+                + "\"episode\":{\"layer\":\"fact\"},"
+                + "\"concept\":{},"            // known type, no layer → defaults to fact
+                + "\"pattern\":{\"layer\":\"experience\"}}}");
+        when(mapper.selectOne(any())).thenReturn(row);
+
+        assertEquals("fact", service.resolveLayer(1L, "episode"));
+        assertEquals("fact", service.resolveLayer(1L, "concept"));
+        assertEquals("experience", service.resolveLayer(1L, "pattern"));
+        assertTrue(service.isExperience(1L, "pattern"));
+        assertFalse(service.isExperience(1L, "episode"));
+        // unknown type → null (caller leaves layer untouched)
+        assertNull(service.resolveLayer(1L, "made-up"));
     }
 
     @Test

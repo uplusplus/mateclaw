@@ -91,6 +91,26 @@ public class WikiPageTypeProfileService {
     }
 
     /**
+     * The knowledge layer for a pageType: {@code fact} / {@code experience}.
+     * A known type with no declared layer defaults to {@code fact} (RFC default,
+     * keeps legacy types factual); an unknown/blank type returns {@code null}
+     * so the caller leaves the page's layer untouched.
+     */
+    public String resolveLayer(Long kbId, String pageType) {
+        WikiPageTypeDef def = resolveProfile(kbId).get(pageType);
+        if (def == null) {
+            return null;
+        }
+        String layer = def.getLayer();
+        return (layer == null || layer.isBlank()) ? "fact" : layer.trim().toLowerCase();
+    }
+
+    /** Whether a pageType is in the experience layer (vs fact). */
+    public boolean isExperience(Long kbId, String pageType) {
+        return "experience".equals(resolveLayer(kbId, pageType));
+    }
+
+    /**
      * The per-stage LLM instruction declared for a pageType, or empty string.
      * {@code stage} is {@code route} / {@code create} / {@code merge}. Used to
      * inject type-specific guidance into the corresponding stage prompt.
