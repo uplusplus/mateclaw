@@ -150,4 +150,83 @@ class WikiToolPermissionTest {
         assertTrue(out.contains("Not permitted"), out);
         verify(h.pageService(), never()).createPage(anyLong(), any(), any(), any(), any(), any());
     }
+
+    // ---------- wiki_update_page: in-place update, no delete/recreate ----------
+
+    @Test
+    void updatePage_allowed_updatesInPlace() {
+        Harness h = harness(List.of(row("concept", 1, 1, 1, 1, "allow")));
+        when(h.pageService().getBySlug(KB, "p")).thenReturn(page("p", "concept"));
+        WikiPageEntity updated = page("p", "concept");
+        updated.setVersion(2);
+        when(h.pageService().updatePageManually(eq(KB), eq("p"), any(), any())).thenReturn(updated);
+
+        String out = h.tool().wiki_update_page(AGENT, "p", "new body", null, null, KB);
+
+        assertTrue(out.contains("\"ok\":true"), out);
+        assertTrue(out.contains("updated in place"), out);
+        verify(h.pageService(), times(1)).updatePageManually(eq(KB), eq("p"), eq("new body"), any());
+        // crucially, it must NOT delete or recreate (the duplicate-page bug)
+        verify(h.pageService(), never()).delete(anyLong(), any());
+        verify(h.pageService(), never()).createPage(anyLong(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void updatePage_updateDenied_doesNotUpdate() {
+        // can read + create, but update flag off → DENY
+        Harness h = harness(List.of(row("concept", 1, 1, 0, 0, "allow")));
+        when(h.pageService().getBySlug(KB, "p")).thenReturn(page("p", "concept"));
+
+        String out = h.tool().wiki_update_page(AGENT, "p", "new body", null, null, KB);
+
+        assertTrue(out.contains("Not permitted"), out);
+        verify(h.pageService(), never()).updatePageManually(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void updatePage_missingPage_reportsNotFound() {
+        Harness h = harness(List.of(row("*", 1, 1, 1, 1, "allow")));
+        when(h.pageService().getBySlug(KB, "ghost")).thenReturn(null);
+
+        String out = h.tool().wiki_update_page(AGENT, "ghost", "body", null, null, KB);
+
+        assertTrue(out.contains("Page not found"), out);
+        verify(h.pageService(), never()).updatePageManually(anyLong(), any(), any(), any());
+    }
+
+    // ---------- wiki_stale_pages: lists stale, honours read filter ----------
+
+    private WikiPageEntity stalePage(String slug, String type, String reason) {
+        WikiPageEntity p = page(slug, type);
+        p.setStale(1);
+        p.setStaleReasonJson(reason);
+        return p;
+    }
+
+    @Test
+    void stalePages_listsOnlyStaleReadablePages() {
+        // wildcard allows reading 'concept' but a specific 'secret' row denies read
+        Harness h = harness(List.of(row("*", 1, 0, 0, 0, "deny"), row("secret", 0, 0, 0, 0, "deny")));
+        WikiPageEntity fresh = page("fresh", "concept");        // not stale → excluded
+        WikiPageEntity staleOk = stalePage("aged", "concept", "{\"reason\":\"fact updated\"}");
+        WikiPageEntity staleHidden = stalePage("classified", "secret", "{\"reason\":\"x\"}");
+        when(h.pageService().listByKbId(KB)).thenReturn(List.of(fresh, staleOk, staleHidden));
+
+        String out = h.tool().wiki_stale_pages(AGENT, null, KB);
+
+        assertTrue(out.contains("\"staleCount\":1"), out);
+        assertTrue(out.contains("aged"), out);
+        assertFalse(out.contains("classified"), out);  // unreadable type filtered out
+        assertFalse(out.contains("fresh"), out);        // non-stale excluded
+    }
+
+    @Test
+    void stalePages_noneStale_returnsZero() {
+        Harness h = harness(List.of());
+        when(h.pageService().listByKbId(KB)).thenReturn(List.of(page("a", "concept"), page("b", "episode")));
+
+        String out = h.tool().wiki_stale_pages(AGENT, null, KB);
+
+        assertTrue(out.contains("\"staleCount\":0"), out);
+    }
 }

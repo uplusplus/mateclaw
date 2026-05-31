@@ -839,6 +839,90 @@ public class WikiTool {
         return "Wikilink enrichment queued for: " + slug;
     }
 
+    // ==================== Page update / stale review ====================
+
+    @Tool(description = """
+            Update an existing wiki page's Markdown body IN PLACE, by slug. This
+            preserves the page's identity, slug, backlinks and version history.
+            Use this to revise or extend a page — do NOT delete and recreate it
+            (that drops links and can leave duplicate pages behind). The summary
+            is re-derived from the new content unless you pass one explicitly.
+            """)
+    public String wiki_update_page(
+            @ToolParam(description = "Agent ID") Long agentId,
+            @ToolParam(description = "Slug of the page to update (from wiki_list_pages / wiki_read_page)") String slug,
+            @ToolParam(description = "New full Markdown content for the page body") String content,
+            @ToolParam(description = "New one-line summary (optional; omit to auto-derive from content)", required = false) String summary,
+            @ToolParam(description = "Target knowledge base name (from wiki_list_kbs). Omit to use the agent's primary KB; switch to `kbId` when two KBs share the name.", required = false) String kbName,
+            @ToolParam(description = "Numeric KB id from wiki_list_kbs. Use when `kbName` returns an ambiguous-name error.", required = false) Long kbId) {
+
+        if (slug == null || slug.isBlank()) {
+            return error("slug is required");
+        }
+        if (content == null || content.isBlank()) {
+            return error("content is required");
+        }
+        KbResolution kbRes = resolveKb(agentId, kbName, kbId);
+        if (kbRes.hasError()) return kbRes.errorJson();
+        kbId = kbRes.kbId();
+
+        WikiPageEntity page = pageService.getBySlug(kbId, slug);
+        if (page == null) {
+            return error("Page not found: '" + slug + "'. Use wiki_list_pages to find the right slug.");
+        }
+        String writeErr = checkWrite(agentId, kbId, page.getPageType(),
+                WikiPageTypePermissionService.WriteOp.UPDATE);
+        if (writeErr != null) return writeErr;
+
+        // summary == null → service re-derives it from the new content.
+        WikiPageEntity updated = pageService.updatePageManually(
+                kbId, slug, content, (summary == null || summary.isBlank()) ? null : summary);
+        return JSONUtil.createObj()
+                .set("ok", true)
+                .set("slug", updated.getSlug())
+                .set("title", updated.getTitle())
+                .set("version", updated.getVersion())
+                .set("message", "Page updated in place (slug and backlinks preserved).")
+                .toString();
+    }
+
+    @Tool(description = """
+            List wiki pages currently marked STALE (needing review) in a knowledge
+            base. A page goes stale when a fact page it depends on was updated, so
+            its synthesis/analysis content may now be out of date. Returns each
+            stale page's title, slug, pageType, knowledge layer and the reason it
+            was flagged. Use this to find what to re-check or re-summarize before
+            relying on experience/analysis pages.
+            """)
+    public String wiki_stale_pages(
+            @ToolParam(description = "Agent ID") Long agentId,
+            @ToolParam(description = "Target knowledge base name (from wiki_list_kbs). Omit to use the agent's primary KB; switch to `kbId` when two KBs share the name.", required = false) String kbName,
+            @ToolParam(description = "Numeric KB id from wiki_list_kbs. Use when `kbName` returns an ambiguous-name error.", required = false) Long kbId) {
+
+        KbResolution kbRes = resolveKb(agentId, kbName, kbId);
+        if (kbRes.hasError()) return kbRes.errorJson();
+        kbId = kbRes.kbId();
+
+        WikiPageTypePermissionService.Access access = pageTypeAccess(agentId, kbId);
+        JSONArray arr = new JSONArray();
+        for (WikiPageEntity p : pageService.listByKbId(kbId)) {
+            if (p.getStale() == null || p.getStale() == 0) continue;
+            if (p.getArchived() != null && p.getArchived() == 1) continue;
+            if (!canRead(access, p)) continue; // honour pageType read permissions
+            arr.add(JSONUtil.createObj()
+                    .set("slug", p.getSlug())
+                    .set("title", p.getTitle())
+                    .set("pageType", p.getPageType())
+                    .set("knowledgeLayer", p.getKnowledgeLayer())
+                    .set("staleReason", p.getStaleReasonJson() == null ? "" : p.getStaleReasonJson()));
+        }
+        return JSONUtil.createObj()
+                .set("kbId", String.valueOf(kbId))
+                .set("staleCount", arr.size())
+                .set("pages", arr)
+                .toString();
+    }
+
     // ==================== Transformations ====================
 
     @Tool(description = """
