@@ -60,6 +60,9 @@ public class GoalManagementTool {
                     required = false) Integer turnBudget,
             @ToolParam(description = "If true, the agent may auto-followup when progress is incomplete. Default false.",
                     required = false) Boolean autoFollowup,
+            @ToolParam(description = "Optional initial checklist: a list of short, individually verifiable "
+                    + "acceptance criteria. Omit to let the system derive the checklist on first evaluation.",
+                    required = false) java.util.List<String> criteria,
             @Nullable ToolContext ctx) {
 
         if (!properties.isEnabled()) {
@@ -86,6 +89,16 @@ public class GoalManagementTool {
         req.setExitCriteria(exitCriteria);
         if (turnBudget != null) req.setTurnBudget(turnBudget);
         if (autoFollowup != null) req.setAutoFollowupEnabled(autoFollowup);
+        if (criteria != null && !criteria.isEmpty()) {
+            java.util.List<vip.mate.goal.model.GoalCriterion> items = new java.util.ArrayList<>();
+            for (String text : criteria) {
+                if (text != null && !text.isBlank()) {
+                    // Only text matters; create() assigns ids, forces passed=false, clears evidence.
+                    items.add(new vip.mate.goal.model.GoalCriterion("", text.trim(), false, ""));
+                }
+            }
+            if (!items.isEmpty()) req.setCriteria(items);
+        }
 
         String username = origin.requesterId() != null && !origin.requesterId().isBlank()
                 ? origin.requesterId() : "system";
