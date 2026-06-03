@@ -10,6 +10,7 @@ import vip.mate.llm.model.ModelConfigEntity;
 import vip.mate.llm.service.ModelCapabilityService;
 import vip.mate.llm.service.ModelCapabilityService.Modality;
 import vip.mate.llm.service.ModelConfigService;
+import vip.mate.llm.service.ModelProviderService;
 import vip.mate.skill.manifest.SkillManifest;
 import vip.mate.skill.runtime.SkillRuntimeService;
 import vip.mate.skill.runtime.model.ResolvedSkill;
@@ -30,6 +31,7 @@ class ProviderRouterSelectPrimaryTest {
     @Mock private AgentBindingResolver bindingService;
     @Mock private ModelCapabilityService capabilityService;
     @Mock private ModelConfigService modelConfigService;
+    @Mock private ModelProviderService modelProviderService;
 
     @InjectMocks private ProviderRouter router;
 
@@ -63,6 +65,17 @@ class ProviderRouterSelectPrimaryTest {
         when(skillRuntimeService.resolveAllSkillsStatus()).thenReturn(List.of(skill));
     }
 
+    /**
+     * Stub a preferred provider as configured (has usable credentials) and
+     * resolving to the given primary chat model. Mirrors the runtime path
+     * {@code pickProviderDefault} takes: a provider must be configured before
+     * its primary chat model is considered.
+     */
+    private void stubConfiguredProvider(String providerId, ModelConfigEntity primaryModel) {
+        when(modelProviderService.isProviderConfigured(providerId)).thenReturn(true);
+        when(modelConfigService.getPrimaryChatModelByProvider(providerId)).thenReturn(primaryModel);
+    }
+
     // ---- tests ----
 
     @Test
@@ -70,8 +83,7 @@ class ProviderRouterSelectPrimaryTest {
     void preferredWinsWithoutCapabilities() {
         stubNoCapabilities();
         when(bindingService.getPreferredProviderIds(AGENT_ID)).thenReturn(List.of("deepseek"));
-        when(modelConfigService.getDefaultModelByProvider("deepseek"))
-                .thenReturn(model("deepseek", "deepseek-chat"));
+        stubConfiguredProvider("deepseek", model("deepseek", "deepseek-chat"));
 
         ModelConfigEntity global = model("openai", "gpt-4o");
         ModelConfigEntity result = router.selectPrimary(AGENT_ID, global);
@@ -86,8 +98,7 @@ class ProviderRouterSelectPrimaryTest {
     void preferredSatisfyingCapabilityWins() {
         bindSkillRequiring("vision");
         when(bindingService.getPreferredProviderIds(AGENT_ID)).thenReturn(List.of("deepseek"));
-        when(modelConfigService.getDefaultModelByProvider("deepseek"))
-                .thenReturn(model("deepseek", "deepseek-vl"));
+        stubConfiguredProvider("deepseek", model("deepseek", "deepseek-vl"));
         when(capabilityService.resolve(eq("deepseek-vl"), any()))
                 .thenReturn(EnumSet.of(Modality.VISION));
 
@@ -114,13 +125,14 @@ class ProviderRouterSelectPrimaryTest {
     }
 
     @Test
-    @DisplayName("4. Preferred provider unavailable → second preferred wins")
+    @DisplayName("4. Unconfigured first preferred is skipped → second preferred wins")
     void firstPreferredUnavailableSecondWins() {
         stubNoCapabilities();
         when(bindingService.getPreferredProviderIds(AGENT_ID)).thenReturn(List.of("deepseek", "dashscope"));
-        when(modelConfigService.getDefaultModelByProvider("deepseek")).thenReturn(null);
-        when(modelConfigService.getDefaultModelByProvider("dashscope"))
-                .thenReturn(model("dashscope", "qwen-max"));
+        // deepseek has no usable credentials → must be skipped, not selected
+        // and then bounced to the global default.
+        when(modelProviderService.isProviderConfigured("deepseek")).thenReturn(false);
+        stubConfiguredProvider("dashscope", model("dashscope", "qwen-max"));
 
         ModelConfigEntity global = model("openai", "gpt-4o");
         ModelConfigEntity result = router.selectPrimary(AGENT_ID, global);
@@ -131,11 +143,11 @@ class ProviderRouterSelectPrimaryTest {
     }
 
     @Test
-    @DisplayName("5. All preferred unavailable → global default")
+    @DisplayName("5. All preferred unconfigured → global default")
     void allPreferredUnavailableFallsBackToGlobal() {
         stubNoCapabilities();
         when(bindingService.getPreferredProviderIds(AGENT_ID)).thenReturn(List.of("deepseek"));
-        when(modelConfigService.getDefaultModelByProvider("deepseek")).thenReturn(null);
+        when(modelProviderService.isProviderConfigured("deepseek")).thenReturn(false);
 
         ModelConfigEntity global = model("openai", "gpt-4o");
         ModelConfigEntity result = router.selectPrimary(AGENT_ID, global);
@@ -167,8 +179,7 @@ class ProviderRouterSelectPrimaryTest {
     void preferredMissesCapabilityGlobalSatisfies() {
         bindSkillRequiring("vision");
         when(bindingService.getPreferredProviderIds(AGENT_ID)).thenReturn(List.of("deepseek"));
-        when(modelConfigService.getDefaultModelByProvider("deepseek"))
-                .thenReturn(model("deepseek", "deepseek-chat"));
+        stubConfiguredProvider("deepseek", model("deepseek", "deepseek-chat"));
         when(capabilityService.resolve(eq("deepseek-chat"), any()))
                 .thenReturn(EnumSet.noneOf(Modality.class));
 
@@ -181,5 +192,23 @@ class ProviderRouterSelectPrimaryTest {
         assertNotNull(result);
         assertEquals("openai", result.getProvider());
         assertEquals("gpt-4o", result.getModelName());
+    }
+
+    @Test
+    @DisplayName("9. Configured preferred provider without a system-default model still resolves")
+    void preferredResolvesViaPerProviderFallback() {
+        stubNoCapabilities();
+        when(bindingService.getPreferredProviderIds(AGENT_ID)).thenReturn(List.of("deepseek"));
+        // getPrimaryChatModelByProvider encapsulates the system-default →
+        // first-enabled-chat fallback, so a preferred provider that does not
+        // hold the single global default still contributes a primary model.
+        stubConfiguredProvider("deepseek", model("deepseek", "deepseek-chat"));
+
+        ModelConfigEntity global = model("volcengine-plan", "doubao-seed");
+        ModelConfigEntity result = router.selectPrimary(AGENT_ID, global);
+
+        assertNotNull(result);
+        assertEquals("deepseek", result.getProvider());
+        assertEquals("deepseek-chat", result.getModelName());
     }
 }
