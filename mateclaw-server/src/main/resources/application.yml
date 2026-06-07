@@ -124,6 +124,13 @@ springdoc:
 
 # MateClaw 自定义配置
 mateclaw:
+  server:
+    # Public base URL used to build absolute download links for tool-generated
+    # files (e.g. https://mateclaw.example.com). Leave empty to fall back to the
+    # current request's host, and to a relative path when no request is bound.
+    # Set this when agents deliver download links to channels/clients that cannot
+    # resolve a relative URL (IM messages, copied links, external downloads).
+    public-base-url: ${MATECLAW_PUBLIC_BASE_URL:}
   jwt:
     secret: ${JWT_SECRET:MateClaw-JWT-Secret-Key-2024-Please-Change-In-Production}
     expiration: 86400000
