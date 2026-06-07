@@ -988,6 +988,12 @@ export const agentBindingApi = {
     http.get(`/agents/${agentId}/provider-preferences`),
   setProviderPreferences: (agentId: string | number, providerIds: string[]) =>
     http.put(`/agents/${agentId}/provider-preferences`, providerIds),
+  // Per-agent knowledge base access scope. Empty array = unrestricted
+  // (agent can reach every KB in its workspace). IDs are kept as strings
+  // for the Snowflake-precision contract.
+  listKbs: (agentId: string | number) => http.get(`/agents/${agentId}/kbs`),
+  setKbs: (agentId: string | number, kbIds: (string | number)[]) =>
+    http.put(`/agents/${agentId}/kbs`, kbIds),
 }
 
 // ==================== Dashboard ====================
