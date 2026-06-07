@@ -644,6 +644,14 @@ export const settingsApi = {
     http.put('/settings/sidecar', data),
 }
 
+// ==================== Global outbound proxy ====================
+export const proxyApi = {
+  get: () => http.get('/settings/proxy'),
+  update: (data: { enabled: boolean; url: string; nonProxyHosts?: string }) =>
+    http.put('/settings/proxy', data),
+  test: (url: string) => http.post('/settings/proxy/test', { url }),
+}
+
 // ==================== Workspace ====================
 const encodeFilePath = (filename: string) =>
   filename.split('/').map(encodeURIComponent).join('/')
