@@ -59,7 +59,7 @@
           </div>
           <!-- Tag filter (#146): orthogonal to the type/status tabs; click to
                toggle, multi-select narrows by intersection (AND). -->
-          <div v-if="availableTags.length" class="tag-filter-bar">
+          <div v-if="availableTags.length || activeTags.length" class="tag-filter-bar">
             <span class="tag-filter-bar__label">{{ t('agents.tagFilter.label') }}</span>
             <button v-for="tag in visibleTags" :key="tag" class="tag-filter-chip"
               :class="{ active: activeTags.includes(tag) }" @click="toggleTag(tag)">
@@ -1056,7 +1056,10 @@ const visibleTags = computed(() => {
   const q = tagSearch.value.trim().toLowerCase()
   if (q) return availableTags.value.filter(t => t.toLowerCase().includes(q))
   const top = availableTags.value.slice(0, TAG_FILTER_LIMIT)
-  const extraActive = activeTags.value.filter(t => !top.includes(t) && availableTags.value.includes(t))
+  // Always surface selected tags outside the top-N — including ones that no
+  // longer exist on any agent (edited/deleted) — so they stay deselectable
+  // instead of silently filtering the roster with no chip to clear them.
+  const extraActive = activeTags.value.filter(t => !top.includes(t))
   return [...top, ...extraActive]
 })
 
