@@ -514,6 +514,27 @@ public class NodeStreamingChatHelper {
         return sb.toString();
     }
 
+    /**
+     * 从异常链中提取 HTTP 状态码和 LLM 返回的原始错误体，用于调试模式展示。
+     * 非 HTTP 异常返回 null。
+     */
+    private static String extractHttpErrorDetail(Throwable error) {
+        Throwable cursor = error;
+        for (int i = 0; cursor != null && i < 5; i++, cursor = cursor.getCause()) {
+            if (cursor instanceof WebClientResponseException wre) {
+                StringBuilder sb = new StringBuilder();
+                sb.append("HTTP ").append(wre.getStatusCode().value());
+                String body = wre.getResponseBodyAsString();
+                if (body != null && !body.isBlank()) {
+                    String trimmed = body.length() > 500 ? body.substring(0, 500) + "..." : body;
+                    sb.append("\n").append(trimmed);
+                }
+                return sb.toString();
+            }
+        }
+        return null;
+    }
+
     private StreamResult streamCallInternal(ChatModel chatModel, Prompt prompt,
                                              String conversationId, String phase,
                                              boolean broadcast) {
@@ -1166,34 +1187,49 @@ public class NodeStreamingChatHelper {
             if (errorType == ErrorType.PROMPT_TOO_LONG) {
                 log.warn("[{}] Prompt too long error, returning to node for compaction: {}",
                         phase, error.getMessage());
+                String httpDetail = extractHttpErrorDetail(error);
+                String debugDetails = buildLlmDebugDetails(chatModel, prompt, conversationId, phase, diagnosticsToken, error,
+                        observedChunkCount.get(), lastAssistantMessage.get(),
+                        promptTokens.get(), completionTokens.get(),
+                        cacheReadTokens.get(), cacheWriteTokens.get());
+                if (httpDetail != null) {
+                    debugDetails = httpDetail + "\n\n" + debugDetails;
+                }
                 return buildErrorResultWithType("Prompt 过长: " + extractUserFriendlyError(error),
                         "Prompt 过长: " + extractUserFriendlyError(error), conversationId, phase, errorType,
-                        buildLlmDebugDetails(chatModel, prompt, conversationId, phase, diagnosticsToken, error,
-                                observedChunkCount.get(), lastAssistantMessage.get(),
-                                promptTokens.get(), completionTokens.get(),
-                                cacheReadTokens.get(), cacheWriteTokens.get()));
+                        debugDetails);
             }
 
             // Auth: 不重试
             if (errorType == ErrorType.AUTH_ERROR) {
                 log.error("[{}] Authentication error, not retrying: {}", phase, error.getMessage());
+                String httpDetail = extractHttpErrorDetail(error);
+                String debugDetails = buildLlmDebugDetails(chatModel, prompt, conversationId, phase, diagnosticsToken, error,
+                        observedChunkCount.get(), lastAssistantMessage.get(),
+                        promptTokens.get(), completionTokens.get(),
+                        cacheReadTokens.get(), cacheWriteTokens.get());
+                if (httpDetail != null) {
+                    debugDetails = httpDetail + "\n\n" + debugDetails;
+                }
                 return buildErrorResultWithType("认证失败: " + extractUserFriendlyError(error),
                         "认证失败: " + extractUserFriendlyError(error), conversationId, phase, errorType,
-                        buildLlmDebugDetails(chatModel, prompt, conversationId, phase, diagnosticsToken, error,
-                                observedChunkCount.get(), lastAssistantMessage.get(),
-                                promptTokens.get(), completionTokens.get(),
-                                cacheReadTokens.get(), cacheWriteTokens.get()));
+                        debugDetails);
             }
 
             // Client error (400): 不重试（参数/格式错误重试也不会变）
             if (errorType == ErrorType.CLIENT_ERROR) {
                 log.error("[{}] Client error (400), not retrying: {}", phase, error.getMessage());
+                String httpDetail = extractHttpErrorDetail(error);
+                String debugDetails = buildLlmDebugDetails(chatModel, prompt, conversationId, phase, diagnosticsToken, error,
+                        observedChunkCount.get(), lastAssistantMessage.get(),
+                        promptTokens.get(), completionTokens.get(),
+                        cacheReadTokens.get(), cacheWriteTokens.get());
+                if (httpDetail != null) {
+                    debugDetails = httpDetail + "\n\n" + debugDetails;
+                }
                 return buildErrorResultWithType("Bad request: " + extractUserFriendlyError(error),
                         "Bad request: " + extractUserFriendlyError(error), conversationId, phase, errorType,
-                        buildLlmDebugDetails(chatModel, prompt, conversationId, phase, diagnosticsToken, error,
-                                observedChunkCount.get(), lastAssistantMessage.get(),
-                                promptTokens.get(), completionTokens.get(),
-                                cacheReadTokens.get(), cacheWriteTokens.get()));
+                        debugDetails);
             }
 
             // Rate limit / Server error: retryable, but with different budgets.
@@ -1212,12 +1248,17 @@ public class NodeStreamingChatHelper {
             // 不可重试或已耗尽重试
             log.error("[{}] LLM call failed after {} attempts for conversation {}: {}",
                     phase, attempt + 1, conversationId, error.getMessage());
+            String httpDetail = extractHttpErrorDetail(error);
+            String debugDetails = buildLlmDebugDetails(chatModel, prompt, conversationId, phase, diagnosticsToken, error,
+                    observedChunkCount.get(), lastAssistantMessage.get(),
+                    promptTokens.get(), completionTokens.get(),
+                    cacheReadTokens.get(), cacheWriteTokens.get());
+            if (httpDetail != null) {
+                debugDetails = httpDetail + "\n\n" + debugDetails;
+            }
             return buildErrorResultWithType("LLM 调用失败: " + extractUserFriendlyError(error),
                     "LLM 调用失败: " + extractUserFriendlyError(error), conversationId, phase, errorType,
-                    buildLlmDebugDetails(chatModel, prompt, conversationId, phase, diagnosticsToken, error,
-                            observedChunkCount.get(), lastAssistantMessage.get(),
-                            promptTokens.get(), completionTokens.get(),
-                            cacheReadTokens.get(), cacheWriteTokens.get()));
+                    debugDetails);
         }
 
         // ===== 成功（检查是否因 thinking-only 软上限或内容重复被截断） =====
@@ -1520,8 +1561,13 @@ public class NodeStreamingChatHelper {
             String errorJson = buildErrorEventJson(errorMsg, conversationId, errorType, debugDetails);
             streamTracker.broadcast(conversationId, "error", errorJson);
         }
-        AssistantMessage errorMessage = new AssistantMessage("[错误] " + errorMsg);
-        return new StreamResult("[错误] " + errorMsg, "", errorMessage,
+        // 调试模式下，将 HTTP 异常号和原始详情附加到会话消息中
+        String displayMsg = errorMsg;
+        if (LlmCallDiagnostics.isNetworkDebugEnabled() && debugDetails != null && !debugDetails.isBlank()) {
+            displayMsg = errorMsg + "\n\n---\n" + debugDetails;
+        }
+        AssistantMessage errorMessage = new AssistantMessage("[错误] " + displayMsg);
+        return new StreamResult("[错误] " + displayMsg, "", errorMessage,
                 List.of(), false, 0, 0, false, errorMsg, errorType);
     }
 
