@@ -831,7 +831,6 @@ export interface ProviderInfo {
   id: string
   name: string
   protocol?: string
-  apiKeyPrefix?: string
   chatModel?: string
   models: ProviderModelInfo[]
   extraModels: ProviderModelInfo[]

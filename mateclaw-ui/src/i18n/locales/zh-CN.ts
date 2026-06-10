@@ -721,7 +721,6 @@ export default {
         providerId: '提供商 ID',
         providerName: '提供商名称',
         defaultBaseUrl: '默认 Base URL',
-        apiKeyPrefix: 'API Key 前缀',
         requireApiKey: '需要 API Key',
         protocol: '协议',
         generateKwargs: 'Generate Kwargs (JSON)',

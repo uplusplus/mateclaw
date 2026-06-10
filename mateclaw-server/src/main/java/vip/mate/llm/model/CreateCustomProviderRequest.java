@@ -9,7 +9,7 @@ public class CreateCustomProviderRequest {
     private String id;
     private String name;
     private String defaultBaseUrl;
-    private String apiKeyPrefix;
+    private String apiKey;
     private String protocol;
     private String chatModel;
     private Boolean requireApiKey;

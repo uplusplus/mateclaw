@@ -86,10 +86,6 @@
             />
             <div class="field-hint">{{ t('settings.model.leaveBlankKeep') }}</div>
           </div>
-          <div v-if="editingProvider?.authType !== 'oauth' && (form.protocol !== 'openai-compatible' || form.requireApiKey)" class="form-group">
-            <label class="form-label">{{ t('settings.model.fields.apiKeyPrefix') }}</label>
-            <input v-model="form.apiKeyPrefix" class="form-input" />
-          </div>
           <div class="form-group">
             <label class="form-label">{{ t('settings.model.fields.protocol') }}</label>
             <select
@@ -184,7 +180,6 @@ defineProps<{
     name: string
     baseUrl: string
     apiKey: string
-    apiKeyPrefix: string
     protocol: string
     chatModel: string
     requireApiKey: boolean

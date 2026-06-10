@@ -159,6 +159,20 @@ class ModelProviderServiceCustomProviderTest {
     }
 
     @Test
+    @DisplayName("createCustomProvider persists a full API key string without a separate prefix field")
+    void createCustomProviderPersistsFullApiKey() {
+        CreateCustomProviderRequest req = req("custom-openai", "Custom OpenAI");
+        req.setApiKey("sk-test-full-key");
+        when(providerMapper.selectById("custom-openai")).thenReturn(null);
+
+        service.createCustomProvider(req);
+
+        ArgumentCaptor<ModelProviderEntity> captor = ArgumentCaptor.forClass(ModelProviderEntity.class);
+        verify(providerMapper).insert(captor.capture());
+        assertEquals("sk-test-full-key", captor.getValue().getApiKey());
+    }
+
+    @Test
     @DisplayName("Empty id still produces 'fields_required' (existing guard, not the new regex)")
     void emptyIdStillReportsFieldsRequired() {
         CreateCustomProviderRequest req = req("", "Local Gemma");

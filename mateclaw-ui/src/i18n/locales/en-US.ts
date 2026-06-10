@@ -841,7 +841,6 @@ export default {
         providerId: 'Provider ID',
         providerName: 'Provider Name',
         defaultBaseUrl: 'Default Base URL',
-        apiKeyPrefix: 'API Key Prefix',
         requireApiKey: 'Requires API Key',
         protocol: 'Protocol',
         generateKwargs: 'Generate Kwargs (JSON)',

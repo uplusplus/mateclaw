@@ -36,7 +36,6 @@ export function useProviderForm(deps: ListDeps) {
     name: '',
     baseUrl: '',
     apiKey: '',
-    apiKeyPrefix: 'sk-',
     protocol: 'openai-compatible',
     chatModel: 'OpenAIChatModel',
     requireApiKey: true,
@@ -95,9 +94,7 @@ export function useProviderForm(deps: ListDeps) {
   })
 
   const providerApiKeyPlaceholder = computed(() => {
-    return providerForm.apiKeyPrefix
-      ? `${t('settings.model.apiKeyInput')} (${providerForm.apiKeyPrefix}...)`
-      : t('settings.model.apiKeyInput')
+    return t('settings.model.apiKeyInput')
   })
 
   function openCreateProviderModal() {
@@ -108,7 +105,6 @@ export function useProviderForm(deps: ListDeps) {
       name: '',
       baseUrl: '',
       apiKey: '',
-      apiKeyPrefix: 'sk-',
       protocol: 'openai-compatible',
       chatModel: 'OpenAIChatModel',
       requireApiKey: true,
@@ -133,7 +129,6 @@ export function useProviderForm(deps: ListDeps) {
       name: provider.name,
       baseUrl: provider.baseUrl || '',
       apiKey: '',
-      apiKeyPrefix: provider.apiKeyPrefix || 'sk-',
       protocol,
       chatModel: provider.chatModel || 'OpenAIChatModel',
       requireApiKey: protocol === 'openai-compatible' ? provider.requireApiKey !== false : true,
@@ -196,13 +191,13 @@ export function useProviderForm(deps: ListDeps) {
         id: providerForm.id,
         name: providerForm.name,
         defaultBaseUrl: providerForm.baseUrl,
-        apiKeyPrefix: providerForm.apiKeyPrefix,
+        apiKey: providerForm.apiKey,
         protocol: providerForm.protocol,
         chatModel: protocolToChatModel(providerForm.protocol),
         requireApiKey,
         models: [],
       })
-      if (providerForm.apiKey || providerForm.generateKwargsText || fallbackPriority > 0) {
+      if (Object.keys(kwargs).length > 0 || fallbackPriority > 0) {
         await modelApi.updateProviderConfig(providerForm.id, {
           apiKey: providerForm.apiKey,
           baseUrl: providerForm.baseUrl,

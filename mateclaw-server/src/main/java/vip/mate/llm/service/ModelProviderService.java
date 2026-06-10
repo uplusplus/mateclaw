@@ -160,7 +160,9 @@ public class ModelProviderService {
         ModelProviderEntity provider = new ModelProviderEntity();
         provider.setProviderId(request.getId());
         provider.setName(request.getName());
-        provider.setApiKeyPrefix(request.getApiKeyPrefix());
+        if (StringUtils.hasText(request.getApiKey())) {
+            provider.setApiKey(request.getApiKey().trim());
+        }
         provider.setChatModel(ModelProtocol.resolveChatModel(request.getProtocol(), request.getChatModel()));
         provider.setBaseUrl(request.getDefaultBaseUrl());
         provider.setGenerateKwargs("{}");
@@ -385,7 +387,6 @@ public class ModelProviderService {
         dto.setId(provider.getProviderId());
         dto.setName(provider.getName());
         dto.setProtocol(ModelProtocol.fromChatModel(provider.getChatModel()).getId());
-        dto.setApiKeyPrefix(provider.getApiKeyPrefix());
         dto.setChatModel(provider.getChatModel());
         dto.setIsCustom(Boolean.TRUE.equals(provider.getIsCustom()));
         dto.setIsLocal(Boolean.TRUE.equals(provider.getIsLocal()));

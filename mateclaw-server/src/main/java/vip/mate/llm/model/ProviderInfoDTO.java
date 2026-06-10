@@ -12,7 +12,6 @@ public class ProviderInfoDTO {
     private String id;
     private String name;
     private String protocol;
-    private String apiKeyPrefix;
     private String chatModel;
     private List<ModelInfoDTO> models = new ArrayList<>();
     private List<ModelInfoDTO> extraModels = new ArrayList<>();
