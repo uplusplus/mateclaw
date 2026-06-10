@@ -76,6 +76,7 @@ public class GeminiNativeClient {
         String diagnosticsToken = LlmCallDiagnostics.currentToken();
         String diagnosticsSource = "gemini-native/" + call.model();
         LlmCallDiagnostics.recordRequestCurrent(diagnosticsSource, body.toString());
+        LlmCallDiagnostics.recordNetworkRequestCurrent(diagnosticsSource, body.toString());
         String url = endpoint(call, "streamGenerateContent") + "&alt=sse";
         log.info("[Gemini] stream: model={}, messages={}, tools={}", call.model(),
                 call.messages().size(), call.tools() != null ? call.tools().size() : 0);
@@ -92,6 +93,8 @@ public class GeminiNativeClient {
                                 .map(errorBody -> {
                                     LlmCallDiagnostics.recordErrorResponse(
                                             diagnosticsToken, diagnosticsSource, errorBody);
+                                    LlmCallDiagnostics.recordNetworkErrorResponse(
+                                            diagnosticsToken, diagnosticsSource, errorBody);
                                     log.error("[Gemini] API error {}: {}", response.statusCode(), errorBody);
                                     return new MateClawException("err.llm.gemini_error",
                                             "Gemini API " + response.statusCode() + ": "
@@ -102,6 +105,7 @@ public class GeminiNativeClient {
                     if (LlmCallDiagnostics.shouldCaptureResponse(diagnosticsToken)) {
                         LlmCallDiagnostics.recordResponseChunk(diagnosticsToken, diagnosticsSource, raw);
                     }
+                    LlmCallDiagnostics.recordNetworkResponseChunk(diagnosticsToken, diagnosticsSource, raw);
                 })
                 .filter(line -> line.startsWith("data:"))
                 .map(line -> line.startsWith("data: ") ? line.substring(6) : line.substring(5))
@@ -116,6 +120,9 @@ public class GeminiNativeClient {
     public JsonNode generate(GeminiCall call) {
         ObjectNode body = buildRequestBody(call);
         String url = endpoint(call, "generateContent");
+        String diagnosticsToken = LlmCallDiagnostics.currentToken();
+        String diagnosticsSource = "gemini-native/" + call.model();
+        LlmCallDiagnostics.recordNetworkRequestCurrent(diagnosticsSource, body.toString());
         log.info("[Gemini] call: model={}, messages={}, tools={}", call.model(),
                 call.messages().size(), call.tools() != null ? call.tools().size() : 0);
 
@@ -128,6 +135,8 @@ public class GeminiNativeClient {
                         resp -> resp.bodyToMono(String.class)
                                 .defaultIfEmpty("")
                                 .map(errorBody -> {
+                                    LlmCallDiagnostics.recordNetworkErrorResponse(
+                                            diagnosticsToken, diagnosticsSource, errorBody);
                                     log.error("[Gemini] API error {}: {}", resp.statusCode(), errorBody);
                                     return new MateClawException("err.llm.gemini_error",
                                             "Gemini API " + resp.statusCode() + ": "
@@ -135,6 +144,7 @@ public class GeminiNativeClient {
                                 }))
                 .bodyToMono(String.class)
                 .block();
+        LlmCallDiagnostics.recordNetworkResponseChunk(diagnosticsToken, diagnosticsSource, response);
         try {
             return objectMapper.readTree(response == null ? "{}" : response);
         } catch (Exception e) {

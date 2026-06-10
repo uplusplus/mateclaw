@@ -412,6 +412,10 @@ public class SystemSettingService {
         return Boolean.parseBoolean(getValue(STATEGRAPH_ENABLED_KEY, "false"));
     }
 
+    public boolean isDebugModeEnabled() {
+        return getBool(DEBUG_MODE_KEY, false);
+    }
+
     /**
      * Read a boolean setting. Returns {@code defaultValue} when the key is
      * absent or stored as a non-boolean string.

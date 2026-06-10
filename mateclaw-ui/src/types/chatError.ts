@@ -20,6 +20,7 @@ export interface ChatErrorInfo {
   httpStatus?: number
   requestId?: string
   rawMessage?: string
+  debugDetails?: string
   retryable: boolean
   timestamp: number
 }
@@ -84,11 +85,13 @@ export function classifyBackendError(data: {
   message?: string
   errorType?: string
   conversationId?: string
+  debugDetails?: string
 }): ChatErrorInfo {
   const mapped = BACKEND_ERROR_TYPE_MAP[data.errorType || '']
   return {
     category: mapped?.category || 'unknown',
     rawMessage: data.message,
+    debugDetails: data.debugDetails,
     retryable: mapped?.retryable ?? true,
     timestamp: Date.now(),
   }

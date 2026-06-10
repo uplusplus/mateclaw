@@ -211,6 +211,14 @@
           </div>
         </div>
 
+        <div v-if="debugErrorDetails" class="debug-error-card">
+          <div class="debug-error-card__header">
+            <el-icon class="debug-error-card__icon"><InfoFilled /></el-icon>
+            <span class="debug-error-card__title">{{ $t('chat.debugErrorDetails') }}</span>
+          </div>
+          <pre class="debug-error-card__body">{{ debugErrorDetails }}</pre>
+        </div>
+
         </template><!-- /传统合并渲染模式 -->
 
         <!--
@@ -513,20 +521,6 @@ const errorTitle = computed(() => {
 
 const errorDescription = computed(() => {
   if (!errorInfo.value) return ''
-  // 优先展示后端 extractUserFriendlyError 生成的具体消息（比泛化模板更有指向性，
-  // 比如"当前模型不支持工具调用，请切换到 qwen3 / qwen2.5 ..."）。
-  // 仅当 rawMessage 为空/过短时才回退到分类模板。
-  // 阈值用 3：可过滤 "OK"/"fail" 之类无意义短串，又能放行 "无权操作该会话"
-  // 这类 7 字中文 / "Forbidden" 这类英文短消息，避免被泛模板覆盖。
-  const raw = errorInfo.value.rawMessage?.trim() || ''
-  if (raw.length > 3) {
-    // 去掉后端冗余前缀，错误卡标题已经表达了类别
-    return raw
-      .replace(/^Bad request:\s*/i, '')
-      .replace(/^LLM 调用失败[:：]\s*/, '')
-      .replace(/^认证失败[:：]\s*/, '')
-      .replace(/^\[错误]\s*/, '')
-  }
   return t(`chat.error.${errorInfo.value.category}.description`)
 })
 
@@ -544,6 +538,11 @@ const errorCode = computed(() => {
 })
 
 const errorRetryable = computed(() => errorInfo.value?.retryable ?? true)
+
+const debugErrorDetails = computed(() => {
+  const details = errorInfo.value?.debugDetails?.trim()
+  return details || ''
+})
 
 // --- Thinking 面板 ---
 const localThinkingExpanded = ref(props.message.thinkingExpanded || false)
@@ -1292,9 +1291,6 @@ watch(isGenerating, (generating) => {
   gap: 12px;
   align-items: flex-start;
   width: 100%;
-  /* Cap at 920px on wide screens but never exceed the actual content column —
-     keeps the bubble container-relative so it narrows with the chat panel. */
-  max-width: min(920px, 100%);
   min-width: 0;
   margin-bottom: 6px;
 }
@@ -1797,7 +1793,6 @@ watch(isGenerating, (generating) => {
   background: var(--mc-danger-bg);
   border: 1px solid color-mix(in srgb, var(--mc-danger) 25%, transparent);
   font-size: 13px;
-  max-width: 480px;
   line-height: 1.5;
 }
 
@@ -1868,6 +1863,48 @@ watch(isGenerating, (generating) => {
   border-color: color-mix(in srgb, var(--mc-danger) 50%, transparent);
 }
 
+.debug-error-card {
+  margin-top: 8px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--mc-info, #2563eb) 7%, var(--mc-bg-elevated));
+  border: 1px solid color-mix(in srgb, var(--mc-info, #2563eb) 24%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.debug-error-card__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.debug-error-card__icon {
+  flex-shrink: 0;
+  color: var(--mc-info, #2563eb);
+}
+
+.debug-error-card__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mc-info, #2563eb);
+}
+
+.debug-error-card__body {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--mc-bg, #ffffff) 82%, #000 18%);
+  color: var(--mc-text-primary, #1e293b);
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre;
+}
+
 /* ==================== INCOMPLETE 截断卡片（重复检测 / thinking-only 软上限） ==================== */
 .incomplete-card {
   margin-top: 8px;
@@ -1876,7 +1913,6 @@ watch(isGenerating, (generating) => {
   background: color-mix(in srgb, var(--mc-warning, #d97706) 8%, var(--mc-bg-elevated));
   border: 1px solid color-mix(in srgb, var(--mc-warning, #d97706) 30%, transparent);
   font-size: 13px;
-  max-width: 480px;
   line-height: 1.5;
 }
 
@@ -1938,7 +1974,6 @@ watch(isGenerating, (generating) => {
   background: color-mix(in srgb, var(--mc-info, #0891b2) 6%, var(--mc-bg-elevated));
   border: 1px solid color-mix(in srgb, var(--mc-info, #0891b2) 25%, transparent);
   font-size: 12.5px;
-  max-width: 480px;
   line-height: 1.5;
 }
 
@@ -1975,7 +2010,6 @@ watch(isGenerating, (generating) => {
   background: color-mix(in srgb, var(--mc-danger, #dc2626) 8%, var(--mc-bg-elevated));
   border: 1px solid color-mix(in srgb, var(--mc-danger, #dc2626) 30%, transparent);
   font-size: 13px;
-  max-width: 480px;
   line-height: 1.5;
 }
 

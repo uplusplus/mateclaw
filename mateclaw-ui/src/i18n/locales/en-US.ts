@@ -121,6 +121,7 @@ export default {
     loadOlderMessages: 'Click to load older messages',
     retry: 'Retry',
     errorCode: 'Error code',
+    debugErrorDetails: 'Raw debug error',
     error: {
       rate_limit: {
         title: 'Too many requests',

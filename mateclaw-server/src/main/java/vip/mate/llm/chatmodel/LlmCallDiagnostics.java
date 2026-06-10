@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Iterator;
 import java.util.Locale;
@@ -14,6 +16,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.function.BooleanSupplier;
 
 /**
  * Captures lightweight request/response previews for a single LLM call so
@@ -26,6 +29,7 @@ import java.util.concurrent.ConcurrentMap;
  */
 public final class LlmCallDiagnostics {
 
+    private static final Logger NETWORK_LOG = LoggerFactory.getLogger("vip.mate.llm.network");
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final int MAX_REQUEST_PREVIEW_CHARS = 6_000;
     private static final int MAX_RESPONSE_PREVIEW_CHARS = 8_000;
@@ -38,6 +42,7 @@ public final class LlmCallDiagnostics {
 
     private static final ThreadLocal<String> CURRENT_TOKEN = new ThreadLocal<>();
     private static final ConcurrentMap<String, MutableSnapshot> SNAPSHOTS = new ConcurrentHashMap<>();
+    private static volatile BooleanSupplier networkDebugEnabled = () -> false;
 
     private LlmCallDiagnostics() {
     }
@@ -60,6 +65,18 @@ public final class LlmCallDiagnostics {
         return CURRENT_TOKEN.get();
     }
 
+    public static void configureNetworkDebug(BooleanSupplier enabledSupplier) {
+        networkDebugEnabled = enabledSupplier != null ? enabledSupplier : () -> false;
+    }
+
+    public static boolean isNetworkDebugEnabled() {
+        try {
+            return networkDebugEnabled.getAsBoolean();
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     public static void clear(String token) {
         if (token != null) {
             SNAPSHOTS.remove(token);
@@ -71,6 +88,25 @@ public final class LlmCallDiagnostics {
 
     public static void recordRequestCurrent(String source, String requestPreview) {
         recordRequest(currentToken(), source, requestPreview);
+    }
+
+    public static void recordNetworkRequestCurrent(String source, String rawRequest) {
+        recordNetworkRequest(currentToken(), source, rawRequest);
+    }
+
+    public static void recordNetworkRequest(String token, String source, String rawRequest) {
+        recordRawNetworkRequest(token, source, rawRequest);
+        writeNetworkBlock("REQUEST", token, source, rawRequest);
+    }
+
+    public static void recordNetworkResponseChunk(String token, String source, String rawResponse) {
+        appendRawNetworkResponse(token, source, rawResponse, false);
+        writeNetworkBlock("RESPONSE_CHUNK", token, source, rawResponse);
+    }
+
+    public static void recordNetworkErrorResponse(String token, String source, String rawResponse) {
+        appendRawNetworkResponse(token, source, rawResponse, true);
+        writeNetworkBlock("ERROR_RESPONSE", token, source, rawResponse);
     }
 
     public static void recordRequest(String token, String source, String requestPreview) {
@@ -120,8 +156,24 @@ public final class LlmCallDiagnostics {
                     snapshot.requestPreview,
                     snapshot.responseSource,
                     snapshot.responsePreview.toString(),
-                    snapshot.responseChunks
+                    snapshot.responseChunks,
+                    snapshot.rawRequestSource,
+                    snapshot.rawRequest,
+                    snapshot.rawResponseSource,
+                    snapshot.rawResponse.toString(),
+                    snapshot.rawResponseChunks
             );
+        }
+    }
+
+    private static void recordRawNetworkRequest(String token, String source, String rawRequest) {
+        if (!isNetworkDebugEnabled() || token == null || rawRequest == null) {
+            return;
+        }
+        MutableSnapshot snapshot = SNAPSHOTS.computeIfAbsent(token, ignored -> new MutableSnapshot());
+        synchronized (snapshot) {
+            snapshot.rawRequestSource = normalizeSource(source);
+            snapshot.rawRequest = rawRequest;
         }
     }
 
@@ -142,6 +194,42 @@ public final class LlmCallDiagnostics {
             entry.append('\n').append(sanitized);
             appendWithCap(snapshot.responsePreview, entry.toString(), MAX_RESPONSE_PREVIEW_CHARS, snapshot);
         }
+    }
+
+    private static void appendRawNetworkResponse(String token, String source, String rawResponse, boolean errorBody) {
+        if (!isNetworkDebugEnabled() || token == null || rawResponse == null) {
+            return;
+        }
+        MutableSnapshot snapshot = SNAPSHOTS.computeIfAbsent(token, ignored -> new MutableSnapshot());
+        synchronized (snapshot) {
+            snapshot.rawResponseSource = normalizeSource(source);
+            snapshot.rawResponseChunks++;
+            if (!snapshot.rawResponse.isEmpty()) {
+                snapshot.rawResponse.append("\n\n");
+            }
+            snapshot.rawResponse.append("[chunk ").append(snapshot.rawResponseChunks).append("]");
+            if (errorBody) {
+                snapshot.rawResponse.append(" [error]");
+            }
+            snapshot.rawResponse.append('\n').append(rawResponse);
+        }
+    }
+
+    private static void writeNetworkBlock(String direction, String token, String source, String rawBody) {
+        if (!isNetworkDebugEnabled() || rawBody == null) {
+            return;
+        }
+        String normalizedDirection = direction == null || direction.isBlank() ? "UNKNOWN" : direction;
+        String normalizedSource = normalizeSource(source);
+        String normalizedToken = token == null || token.isBlank() ? "none" : token;
+        NETWORK_LOG.info("""
+
+                ===== LLM {} START token={} source={} =====
+                {}
+                ===== LLM {} END token={} source={} =====""",
+                normalizedDirection, normalizedToken, normalizedSource,
+                rawBody,
+                normalizedDirection, normalizedToken, normalizedSource);
     }
 
     private static void appendWithCap(StringBuilder builder, String chunk, int maxChars, MutableSnapshot snapshot) {
@@ -283,6 +371,11 @@ public final class LlmCallDiagnostics {
         private final StringBuilder responsePreview = new StringBuilder();
         private int responseChunks;
         private boolean responsePreviewTruncated;
+        private String rawRequestSource;
+        private String rawRequest;
+        private String rawResponseSource;
+        private final StringBuilder rawResponse = new StringBuilder();
+        private int rawResponseChunks;
     }
 
     public record Snapshot(
@@ -290,10 +383,15 @@ public final class LlmCallDiagnostics {
             String requestPreview,
             String responseSource,
             String responsePreview,
-            int responseChunks
+            int responseChunks,
+            String rawRequestSource,
+            String rawRequest,
+            String rawResponseSource,
+            String rawResponse,
+            int rawResponseChunks
     ) {
         private static Snapshot empty() {
-            return new Snapshot(null, null, null, null, 0);
+            return new Snapshot(null, null, null, null, 0, null, null, null, null, 0);
         }
     }
 }

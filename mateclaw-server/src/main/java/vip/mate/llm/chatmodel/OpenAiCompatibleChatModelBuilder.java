@@ -295,6 +295,8 @@ public class OpenAiCompatibleChatModelBuilder implements ChatModelBuilder {
                 } catch (WebClientResponseException e) {
                     LlmCallDiagnostics.recordErrorResponse(
                             LlmCallDiagnostics.currentToken(), diagnosticsSource(provider), e.getResponseBodyAsString());
+                    LlmCallDiagnostics.recordNetworkErrorResponse(
+                            LlmCallDiagnostics.currentToken(), diagnosticsSource(provider), e.getResponseBodyAsString());
                     logOpenAiError(provider, e);
                     throw e;
                 }
@@ -320,6 +322,8 @@ public class OpenAiCompatibleChatModelBuilder implements ChatModelBuilder {
                         .doOnError(error -> {
                             if (error instanceof WebClientResponseException e) {
                                 LlmCallDiagnostics.recordErrorResponse(
+                                        diagnosticsToken, diagnosticsSource, e.getResponseBodyAsString());
+                                LlmCallDiagnostics.recordNetworkErrorResponse(
                                         diagnosticsToken, diagnosticsSource, e.getResponseBodyAsString());
                                 logOpenAiError(provider, e);
                             }
@@ -470,6 +474,7 @@ public class OpenAiCompatibleChatModelBuilder implements ChatModelBuilder {
         try {
             String body = objectMapper.writeValueAsString(chatRequest);
             LlmCallDiagnostics.recordRequestCurrent(diagnosticsSource(provider), body);
+            LlmCallDiagnostics.recordNetworkRequestCurrent(diagnosticsSource(provider), body);
             log.info("OpenAI-compatible request: provider={}, body={}",
                     provider.getProviderId(), body);
         } catch (Exception e) {
@@ -485,12 +490,12 @@ public class OpenAiCompatibleChatModelBuilder implements ChatModelBuilder {
 
     private void captureOpenAiChunk(String diagnosticsToken, String diagnosticsSource,
                                     OpenAiApi.ChatCompletionChunk chunk) {
-        if (!LlmCallDiagnostics.shouldCaptureResponse(diagnosticsToken)) {
-            return;
-        }
         try {
-            LlmCallDiagnostics.recordResponseChunk(
-                    diagnosticsToken, diagnosticsSource, objectMapper.writeValueAsString(chunk));
+            String body = objectMapper.writeValueAsString(chunk);
+            if (LlmCallDiagnostics.shouldCaptureResponse(diagnosticsToken)) {
+                LlmCallDiagnostics.recordResponseChunk(diagnosticsToken, diagnosticsSource, body);
+            }
+            LlmCallDiagnostics.recordNetworkResponseChunk(diagnosticsToken, diagnosticsSource, body);
         } catch (Exception e) {
             log.debug("Failed to serialize OpenAI-compatible response chunk for diagnostics: {}",
                     e.getMessage());

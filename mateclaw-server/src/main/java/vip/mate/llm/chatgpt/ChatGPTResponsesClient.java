@@ -75,6 +75,7 @@ public class ChatGPTResponsesClient {
         String diagnosticsToken = LlmCallDiagnostics.currentToken();
         String diagnosticsSource = "chatgpt-responses/" + model;
         LlmCallDiagnostics.recordRequestCurrent(diagnosticsSource, bodyJson);
+        LlmCallDiagnostics.recordNetworkRequestCurrent(diagnosticsSource, bodyJson);
         log.info("[ChatGPT] Request: model={}, messages={}, tools={}", model, messages.size(),
                 tools != null ? tools.size() : 0);
         log.debug("[ChatGPT] Request body: {}", bodyJson.length() > 2000
@@ -92,6 +93,8 @@ public class ChatGPTResponsesClient {
                                 .map(errorBody -> {
                                     LlmCallDiagnostics.recordErrorResponse(
                                             diagnosticsToken, diagnosticsSource, errorBody);
+                                    LlmCallDiagnostics.recordNetworkErrorResponse(
+                                            diagnosticsToken, diagnosticsSource, errorBody);
                                     log.error("[ChatGPT] API error {}: {}", response.statusCode(), errorBody);
                                     return new MateClawException("ChatGPT API " + response.statusCode() + ": " + errorBody);
                                 }))
@@ -101,6 +104,7 @@ public class ChatGPTResponsesClient {
                     if (LlmCallDiagnostics.shouldCaptureResponse(diagnosticsToken)) {
                         LlmCallDiagnostics.recordResponseChunk(diagnosticsToken, diagnosticsSource, raw);
                     }
+                    LlmCallDiagnostics.recordNetworkResponseChunk(diagnosticsToken, diagnosticsSource, raw);
                 })
                 .filter(line -> !line.isBlank() && !line.equals("[DONE]"))
                 .filter(line -> line.startsWith("data:"))

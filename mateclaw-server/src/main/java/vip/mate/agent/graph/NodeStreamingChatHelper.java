@@ -1167,21 +1167,33 @@ public class NodeStreamingChatHelper {
                 log.warn("[{}] Prompt too long error, returning to node for compaction: {}",
                         phase, error.getMessage());
                 return buildErrorResultWithType("Prompt 过长: " + extractUserFriendlyError(error),
-                        conversationId, phase, errorType);
+                        "Prompt 过长: " + extractUserFriendlyError(error), conversationId, phase, errorType,
+                        buildLlmDebugDetails(chatModel, prompt, conversationId, phase, diagnosticsToken, error,
+                                observedChunkCount.get(), lastAssistantMessage.get(),
+                                promptTokens.get(), completionTokens.get(),
+                                cacheReadTokens.get(), cacheWriteTokens.get()));
             }
 
             // Auth: 不重试
             if (errorType == ErrorType.AUTH_ERROR) {
                 log.error("[{}] Authentication error, not retrying: {}", phase, error.getMessage());
                 return buildErrorResultWithType("认证失败: " + extractUserFriendlyError(error),
-                        conversationId, phase, errorType);
+                        "认证失败: " + extractUserFriendlyError(error), conversationId, phase, errorType,
+                        buildLlmDebugDetails(chatModel, prompt, conversationId, phase, diagnosticsToken, error,
+                                observedChunkCount.get(), lastAssistantMessage.get(),
+                                promptTokens.get(), completionTokens.get(),
+                                cacheReadTokens.get(), cacheWriteTokens.get()));
             }
 
             // Client error (400): 不重试（参数/格式错误重试也不会变）
             if (errorType == ErrorType.CLIENT_ERROR) {
                 log.error("[{}] Client error (400), not retrying: {}", phase, error.getMessage());
                 return buildErrorResultWithType("Bad request: " + extractUserFriendlyError(error),
-                        conversationId, phase, errorType);
+                        "Bad request: " + extractUserFriendlyError(error), conversationId, phase, errorType,
+                        buildLlmDebugDetails(chatModel, prompt, conversationId, phase, diagnosticsToken, error,
+                                observedChunkCount.get(), lastAssistantMessage.get(),
+                                promptTokens.get(), completionTokens.get(),
+                                cacheReadTokens.get(), cacheWriteTokens.get()));
             }
 
             // Rate limit / Server error: retryable, but with different budgets.
@@ -1201,7 +1213,11 @@ public class NodeStreamingChatHelper {
             log.error("[{}] LLM call failed after {} attempts for conversation {}: {}",
                     phase, attempt + 1, conversationId, error.getMessage());
             return buildErrorResultWithType("LLM 调用失败: " + extractUserFriendlyError(error),
-                    conversationId, phase, errorType);
+                    "LLM 调用失败: " + extractUserFriendlyError(error), conversationId, phase, errorType,
+                    buildLlmDebugDetails(chatModel, prompt, conversationId, phase, diagnosticsToken, error,
+                            observedChunkCount.get(), lastAssistantMessage.get(),
+                            promptTokens.get(), completionTokens.get(),
+                            cacheReadTokens.get(), cacheWriteTokens.get()));
         }
 
         // ===== 成功（检查是否因 thinking-only 软上限或内容重复被截断） =====
@@ -1488,6 +1504,12 @@ public class NodeStreamingChatHelper {
     /** 构建带错误类型的 StreamResult，并允许 warning 文案与 error payload 解耦 */
     private StreamResult buildErrorResultWithType(String errorMsg, String warningMsg, String conversationId,
                                                     String phase, ErrorType errorType) {
+        return buildErrorResultWithType(errorMsg, warningMsg, conversationId, phase, errorType, null);
+    }
+
+    /** 构建带错误类型的 StreamResult，并允许调试模式下附带原始诊断详情 */
+    private StreamResult buildErrorResultWithType(String errorMsg, String warningMsg, String conversationId,
+                                                    String phase, ErrorType errorType, String debugDetails) {
         log.error("[{}] Building typed error result for conversation {}: {} (type={})",
                 phase, conversationId, errorMsg, errorType);
         if (streamTracker != null && conversationId != null) {
@@ -1495,7 +1517,7 @@ public class NodeStreamingChatHelper {
                 broadcastDelta(conversationId, "warning", buildDeltaJson(warningMsg));
             }
             // 广播结构化 error 事件，供前端展示错误卡片
-            String errorJson = buildErrorEventJson(errorMsg, conversationId, errorType);
+            String errorJson = buildErrorEventJson(errorMsg, conversationId, errorType, debugDetails);
             streamTracker.broadcast(conversationId, "error", errorJson);
         }
         AssistantMessage errorMessage = new AssistantMessage("[错误] " + errorMsg);
@@ -1510,52 +1532,83 @@ public class NodeStreamingChatHelper {
                                                        AssistantMessage lastAssistantMessage,
                                                        int promptTokens, int completionTokens,
                                                        int cacheReadTokens, int cacheWriteTokens) {
-        String errorMsg = buildEmptyResponseErrorMessage(chatModel, prompt, conversationId, phase,
+        String debugDetails = buildEmptyResponseDebugDetails(chatModel, prompt, conversationId, phase,
                 diagnosticsToken, observedChunkCount, lastAssistantMessage,
                 promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens);
-        return buildErrorResultWithType(errorMsg, "LLM 返回空响应",
-                conversationId, phase, ErrorType.EMPTY_RESPONSE);
+        return buildErrorResultWithType("LLM 返回空响应", "LLM 返回空响应",
+                conversationId, phase, ErrorType.EMPTY_RESPONSE, debugDetails);
     }
 
-    private String buildEmptyResponseErrorMessage(ChatModel chatModel, Prompt prompt,
+    private String buildLlmDebugDetails(ChatModel chatModel, Prompt prompt,
+                                        String conversationId, String phase,
+                                        String diagnosticsToken,
+                                        Throwable error,
+                                        int observedChunkCount,
+                                        AssistantMessage lastAssistantMessage,
+                                        int promptTokens, int completionTokens,
+                                        int cacheReadTokens, int cacheWriteTokens) {
+        StringBuilder sb = new StringBuilder("LLM 调用异常");
+        if (error != null) {
+            sb.append("\n\n[异常链]\n").append(extractFullErrorChain(error));
+        }
+        appendCapturedNetworkDebug(sb, chatModel, prompt, conversationId, phase,
+                diagnosticsToken, observedChunkCount, lastAssistantMessage,
+                promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens);
+        return sb.toString();
+    }
+
+    private String buildEmptyResponseDebugDetails(ChatModel chatModel, Prompt prompt,
                                                   String conversationId, String phase,
                                                   String diagnosticsToken,
                                                   int observedChunkCount,
                                                   AssistantMessage lastAssistantMessage,
                                                   int promptTokens, int completionTokens,
                                                   int cacheReadTokens, int cacheWriteTokens) {
+        StringBuilder sb = new StringBuilder("LLM 返回空响应");
+        appendCapturedNetworkDebug(sb, chatModel, prompt, conversationId, phase,
+                diagnosticsToken, observedChunkCount, lastAssistantMessage,
+                promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens);
+        return sb.toString();
+    }
+
+    private void appendCapturedNetworkDebug(StringBuilder sb, ChatModel chatModel, Prompt prompt,
+                                            String conversationId, String phase,
+                                            String diagnosticsToken,
+                                            int observedChunkCount,
+                                            AssistantMessage lastAssistantMessage,
+                                            int promptTokens, int completionTokens,
+                                            int cacheReadTokens, int cacheWriteTokens) {
         LlmCallDiagnostics.Snapshot snapshot = LlmCallDiagnostics.snapshot(diagnosticsToken);
-        String requestSource = snapshot.requestSource();
-        String responseSource = snapshot.responseSource();
-        String requestPreview = snapshot.requestPreview();
-        String responsePreview = snapshot.responsePreview();
-        if (requestPreview == null || requestPreview.isBlank()) {
+        String requestSource = snapshot.rawRequestSource();
+        String responseSource = snapshot.rawResponseSource();
+        String requestBody = snapshot.rawRequest();
+        String responseBody = snapshot.rawResponse();
+        if (requestBody == null || requestBody.isBlank()) {
             requestSource = "spring-ai/prompt_preview";
-            requestPreview = buildPromptPreview(prompt);
+            requestBody = buildPromptPreview(prompt);
         }
-        if (responsePreview == null || responsePreview.isBlank()) {
-            responsePreview = buildParsedAssistantPreview(lastAssistantMessage);
+        if (responseBody == null || responseBody.isBlank()) {
+            responseBody = buildParsedAssistantPreview(lastAssistantMessage);
         }
 
-        StringBuilder sb = new StringBuilder("LLM 返回空响应");
         sb.append("\n\n[原始请求数据]");
         if (requestSource != null && !requestSource.isBlank()) {
             sb.append("\nsource=").append(requestSource);
         }
-        sb.append('\n').append(requestPreview);
+        sb.append('\n').append(requestBody);
 
         sb.append("\n\n[原始返回数据]");
         if (responseSource != null && !responseSource.isBlank()) {
             sb.append("\nsource=").append(responseSource);
         }
-        sb.append('\n').append(responsePreview);
+        sb.append('\n').append(responseBody);
 
         sb.append("\n\n[观测摘要]\n");
         sb.append("phase=").append(phase != null ? phase : "")
                 .append(", conversationId=").append(conversationId != null ? conversationId : "")
                 .append(", model=").append(identifyModel(chatModel))
                 .append(", observedChunks=").append(observedChunkCount)
-                .append(", rawResponseChunks=").append(snapshot.responseChunks())
+                .append(", rawResponseChunks=").append(snapshot.rawResponseChunks())
                 .append(", promptTokens=").append(promptTokens)
                 .append(", completionTokens=").append(completionTokens)
                 .append(", cacheReadTokens=").append(cacheReadTokens)
@@ -1569,7 +1622,6 @@ public class NodeStreamingChatHelper {
         } else {
             sb.append(", parsedAssistant=none");
         }
-        return sb.toString();
     }
 
     private String buildPromptPreview(Prompt prompt) {
@@ -1655,6 +1707,12 @@ public class NodeStreamingChatHelper {
 
     /** 构建 error 事件的 JSON payload */
     private static String buildErrorEventJson(String message, String conversationId, ErrorType errorType) {
+        return buildErrorEventJson(message, conversationId, errorType, null);
+    }
+
+    /** 构建 error 事件的 JSON payload */
+    private static String buildErrorEventJson(String message, String conversationId,
+                                              ErrorType errorType, String debugDetails) {
         StringBuilder sb = new StringBuilder("{");
         sb.append("\"message\":\"");
         appendJsonEscaped(sb, message);
@@ -1662,7 +1720,13 @@ public class NodeStreamingChatHelper {
         appendJsonEscaped(sb, conversationId);
         sb.append("\",\"errorType\":\"");
         sb.append(errorType.name());
-        sb.append("\"}");
+        if (LlmCallDiagnostics.isNetworkDebugEnabled()
+                && debugDetails != null && !debugDetails.isBlank()) {
+            sb.append(",\"debugDetails\":\"");
+            appendJsonEscaped(sb, debugDetails);
+            sb.append("\"");
+        }
+        sb.append("}");
         return sb.toString();
     }
 

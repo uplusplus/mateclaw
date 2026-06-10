@@ -9,7 +9,7 @@
  * - Non-interruptible phases: message is queued and auto-resumed when the current step ends.
  * - During approval: message is queued, approval flow is not interrupted.
  */
-import { ref, computed } from 'vue'
+import { ref, computed, onBeforeUnmount } from 'vue'
 import { useMessages } from './useMessages'
 import { useStream } from './useStream'
 import { useMessageQueue } from './useMessageQueue'
@@ -710,7 +710,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     const errorInfo: ChatErrorInfo = data.errorInfo
       || (data.errorType
         ? classifyBackendError(data)
-        : { category: 'unknown', rawMessage: data.message, retryable: true, timestamp: Date.now() })
+        : { category: 'unknown', rawMessage: data.message, debugDetails: data.debugDetails, retryable: true, timestamp: Date.now() })
     if (currentAssistantId.value) {
       const msg = getMessage(currentAssistantId.value)
       if (msg) {
@@ -1689,6 +1689,22 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   // ===== Auto TTS =====
   let ttsAutoModeCache: string | null = null
   let ttsCacheExpiry = 0
+  const handleSystemSettingsUpdated = (event: Event) => {
+    const detail = (event as CustomEvent).detail
+    if (detail && Object.prototype.hasOwnProperty.call(detail, 'ttsAutoMode')) {
+      ttsAutoModeCache = detail.ttsAutoMode || 'off'
+      ttsCacheExpiry = Date.now() + 5 * 60 * 1000
+    } else {
+      ttsAutoModeCache = null
+      ttsCacheExpiry = 0
+    }
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('mc:system-settings-updated', handleSystemSettingsUpdated)
+    onBeforeUnmount(() => {
+      window.removeEventListener('mc:system-settings-updated', handleSystemSettingsUpdated)
+    })
+  }
 
   async function triggerAutoTts(conversationId: string, text: string) {
     try {

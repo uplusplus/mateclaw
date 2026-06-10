@@ -121,6 +121,7 @@ export default {
     loadOlderMessages: '点击加载更早的消息',
     retry: '重试',
     errorCode: '错误码',
+    debugErrorDetails: '调试原始异常',
     error: {
       rate_limit: {
         title: '请求过于频繁',

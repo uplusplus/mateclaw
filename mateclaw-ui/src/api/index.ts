@@ -629,11 +629,18 @@ export const setupApi = {
 }
 
 // ==================== Settings ====================
+const emitSystemSettingsUpdated = (res: any) => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('mc:system-settings-updated', { detail: res?.data ?? res }))
+  }
+  return res
+}
+
 export const settingsApi = {
   get: () => http.get('/settings'),
-  update: (data: any) => http.put('/settings', data),
+  update: (data: any) => http.put('/settings', data).then(emitSystemSettingsUpdated),
   getLanguage: () => http.get('/settings/language'),
-  updateLanguage: (language: string) => http.put('/settings/language', { language }),
+  updateLanguage: (language: string) => http.put('/settings/language', { language }).then(emitSystemSettingsUpdated),
   // Dedicated endpoint for the multimodal sidecar configuration. The bulk
   // /settings PUT now guards vision/video model ids with non-null checks so
   // unrelated settings pages can't clobber them via partial payloads. This
@@ -643,7 +650,7 @@ export const settingsApi = {
   // coerces both into Long. The string form is preferred from the UI to
   // sidestep JS Number precision loss on 19-digit Snowflake IDs.
   updateSidecar: (data: { defaultVisionModelId: number | string | null; defaultVideoModelId: number | string | null }) =>
-    http.put('/settings/sidecar', data),
+    http.put('/settings/sidecar', data).then(emitSystemSettingsUpdated),
 }
 
 // ==================== Workspace ====================
