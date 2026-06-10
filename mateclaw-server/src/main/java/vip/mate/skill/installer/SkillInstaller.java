@@ -118,6 +118,18 @@ public class SkillInstaller {
         }
     }
 
+    /**
+     * 异步补齐搜索结果的下载数 / star 数，避免阻塞主搜索链路。
+     */
+    public Map<String, HubSkillStats> getHubStats(List<String> slugs) {
+        try {
+            return skillHubClient.fetchStats(slugs);
+        } catch (Exception e) {
+            log.warn("Hub stats fetch failed: {}", e.getMessage());
+            return Collections.emptyMap();
+        }
+    }
+
     // ==================== 异步安装流程 ====================
 
     @Async

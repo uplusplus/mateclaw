@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import vip.mate.skill.installer.model.HubSkillInfo;
+import vip.mate.skill.installer.model.HubSkillStats;
 import vip.mate.skill.installer.model.SkillBundle;
 import vip.mate.skill.runtime.SkillFrontmatterParser;
 
@@ -14,9 +15,11 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * ClawHub marketplace API client.
@@ -96,6 +99,50 @@ public class SkillHubClient {
             }
         }
         return Collections.emptyList();
+    }
+
+    /**
+     * Fetch downloads / stars asynchronously after the search list is already rendered.
+     */
+    public Map<String, HubSkillStats> fetchStats(List<String> slugs) {
+        if (slugs == null || slugs.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        List<String> normalized = slugs.stream()
+                .filter(s -> s != null && !s.isBlank())
+                .map(String::trim)
+                .distinct()
+                .limit(20)
+                .toList();
+        if (normalized.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        Map<String, HubSkillStats> statsBySlug = new java.util.concurrent.ConcurrentHashMap<>();
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
+        for (String slug : normalized) {
+            futures.add(fetchMetadataAsync(slug, searchStatsTimeoutSeconds())
+                    .thenAccept(metadata -> {
+                        if (metadata == null) return;
+                        statsBySlug.put(slug, new HubSkillStats(
+                                slug,
+                                metadata.downloads(),
+                                metadata.stars(),
+                                metadata.version()
+                        ));
+                    }));
+        }
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+        Map<String, HubSkillStats> ordered = new java.util.LinkedHashMap<>();
+        for (String slug : normalized) {
+            HubSkillStats stats = statsBySlug.get(slug);
+            if (stats != null) {
+                ordered.put(slug, stats);
+            }
+        }
+        return ordered;
     }
 
     /**
@@ -218,6 +265,24 @@ public class SkillHubClient {
         return null;
     }
 
+    private CompletableFuture<HubSkillMetadata> fetchMetadataAsync(String slug, int timeoutSeconds) {
+        String url = properties.getBaseUrl() + properties.getSkillsPath() + "/" + encodeParam(slug);
+        return httpClient.sendAsync(jsonGet(url, timeoutSeconds), HttpResponse.BodyHandlers.ofString())
+                .thenApply(response -> {
+                    if (response.statusCode() == 200) {
+                        return parseMetadataResponse(response.body());
+                    }
+                    if (response.statusCode() != 404) {
+                        log.debug("Hub async stats skipped for '{}': status {}", slug, response.statusCode());
+                    }
+                    return null;
+                })
+                .exceptionally(e -> {
+                    log.debug("Hub async stats skipped for '{}': {}", slug, e.getMessage());
+                    return null;
+                });
+    }
+
     private byte[] downloadBundleZip(String slug, String version) {
         StringBuilder url = new StringBuilder()
                 .append(properties.getBaseUrl())
@@ -278,9 +343,13 @@ public class SkillHubClient {
     }
 
     private HttpRequest jsonGet(String url) {
+        return jsonGet(url, properties.getHttpTimeout());
+    }
+
+    private HttpRequest jsonGet(String url, int timeoutSeconds) {
         return HttpRequest.newBuilder()
                 .uri(URI.create(url))
-                .timeout(Duration.ofSeconds(properties.getHttpTimeout()))
+                .timeout(Duration.ofSeconds(timeoutSeconds))
                 .GET()
                 .header("Accept", "application/json")
                 .header("User-Agent", "MateClaw/1.0")
@@ -300,8 +369,35 @@ public class SkillHubClient {
                 data = json.get("skills");
             }
             if (data instanceof List<?> list) {
-                String jsonStr = objectMapper.writeValueAsString(list);
-                return objectMapper.readValue(jsonStr, new TypeReference<>() {});
+                List<HubSkillInfo> results = new ArrayList<>();
+                for (Object item : list) {
+                    if (!(item instanceof Map<?, ?> raw)) {
+                        continue;
+                    }
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> row = (Map<String, Object>) raw;
+                    HubSkillInfo info = new HubSkillInfo();
+                    info.setSlug(stringOf(row.get("slug")));
+                    info.setName(firstNonBlank(
+                            stringOf(row.get("displayName")),
+                            stringOf(row.get("name"))));
+                    info.setDescription(firstNonBlank(
+                            stringOf(row.get("summary")),
+                            stringOf(row.get("description"))));
+                    info.setVersion(firstNonBlank(
+                            stringOf(row.get("version")),
+                            nestedString(row, "tags", "latest")));
+                    info.setAuthor(firstNonBlank(
+                            stringOf(row.get("author")),
+                            nestedString(row, "owner", "displayName"),
+                            stringOf(row.get("ownerHandle"))));
+                    info.setIcon(stringOf(row.get("icon")));
+                    info.setDownloads(intOf(row.get("downloads")));
+                    info.setStars(intOf(row.get("stars")));
+                    info.setBundleUrl(buildSkillUrl(info.getSlug(), info.getVersion()));
+                    results.add(info);
+                }
+                return results;
             }
             return Collections.emptyList();
         } catch (Exception e) {
@@ -342,14 +438,23 @@ public class SkillHubClient {
             }
             if (owner == null) owner = stringOf(skill.get("author"));
 
-            return new HubSkillMetadata(displayName, summary, version, owner);
+            Integer downloads = nestedInt(skill, "stats", "downloads");
+            Integer stars = nestedInt(skill, "stats", "stars");
+
+            return new HubSkillMetadata(displayName, summary, version, owner, downloads, stars);
         } catch (Exception e) {
             log.warn("Failed to parse hub metadata response: {}", e.getMessage());
             return null;
         }
     }
 
-    private record HubSkillMetadata(String displayName, String summary, String version, String owner) {}
+    private record HubSkillMetadata(
+            String displayName,
+            String summary,
+            String version,
+            String owner,
+            Integer downloads,
+            Integer stars) {}
 
     // ==================== misc helpers ====================
 
@@ -359,11 +464,54 @@ public class SkillHubClient {
         return s.isBlank() ? null : s;
     }
 
+    @SuppressWarnings("unchecked")
+    private static String nestedString(Map<String, Object> root, String parentKey, String childKey) {
+        if (root == null) return null;
+        Object parent = root.get(parentKey);
+        if (!(parent instanceof Map<?, ?> map)) return null;
+        return stringOf(((Map<String, Object>) map).get(childKey));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Integer nestedInt(Map<String, Object> root, String parentKey, String childKey) {
+        if (root == null) return null;
+        Object parent = root.get(parentKey);
+        if (!(parent instanceof Map<?, ?> map)) return null;
+        return intOf(((Map<String, Object>) map).get(childKey));
+    }
+
+    private static Integer intOf(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number n) {
+            return n.intValue();
+        }
+        try {
+            return Integer.parseInt(v.toString());
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
     private static String firstNonBlank(String... values) {
         for (String v : values) {
             if (v != null && !v.isBlank()) return v;
         }
         return "";
+    }
+
+    private String buildSkillUrl(String slug, String version) {
+        if (slug == null || slug.isBlank()) {
+            return null;
+        }
+        String base = properties.getBaseUrl() + "/skills/" + slug;
+        if (version == null || version.isBlank()) {
+            return base;
+        }
+        return base + "@" + version;
+    }
+
+    private int searchStatsTimeoutSeconds() {
+        return Math.max(1, Math.min(4, properties.getHttpTimeout()));
     }
 
     private boolean isRetryable(int statusCode) {

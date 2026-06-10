@@ -42,6 +42,13 @@ public class SkillInstallController {
         return R.ok(skillInstaller.searchHub(q, limit));
     }
 
+    @Operation(summary = "异步获取 ClawHub 技能统计")
+    @PostMapping("/hub/stats")
+    @RequireWorkspaceRole("admin")
+    public R<Map<String, HubSkillStats>> hubStats(@RequestBody List<String> slugs) {
+        return R.ok(skillInstaller.getHubStats(slugs));
+    }
+
     @Operation(summary = "开始异步安装 skill")
     @PostMapping("/start")
     @RequireWorkspaceRole("admin")

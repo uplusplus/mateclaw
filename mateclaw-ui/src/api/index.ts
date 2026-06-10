@@ -393,6 +393,8 @@ export const skillTemplateApi = {
 export const skillInstallApi = {
   searchHub: (q: string, limit = 20) =>
     http.get('/skills/install/hub/search', { params: { q, limit } }),
+  getHubStats: (slugs: string[]) =>
+    http.post('/skills/install/hub/stats', slugs),
   startInstall: (data: { bundleUrl: string; version?: string; enable?: boolean; targetName?: string; overwrite?: boolean }) =>
     http.post('/skills/install/start', data),
   getStatus: (taskId: string) =>

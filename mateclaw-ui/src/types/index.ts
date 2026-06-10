@@ -508,7 +508,15 @@ export interface HubSkillInfo {
   icon?: string
   tags?: string[]
   downloads?: number
+  stars?: number
   bundleUrl: string
+}
+
+export interface HubSkillStats {
+  slug: string
+  downloads?: number
+  stars?: number
+  version?: string
 }
 
 // ==================== 工具 ====================

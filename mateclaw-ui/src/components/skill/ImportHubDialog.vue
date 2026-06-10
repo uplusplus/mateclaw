@@ -69,12 +69,50 @@
             <div v-for="item in searchResults" :key="item.slug" class="search-item">
               <div class="search-item-info">
                 <span class="search-item-icon">{{ item.icon || '📦' }}</span>
-                <div>
-                  <div class="search-item-name">{{ item.name }}</div>
+                <div class="search-item-content">
+                  <div class="search-item-title">
+                    <div class="search-item-name">{{ item.name }}</div>
+                    <span v-if="isDuplicateHubName(item.name)" class="search-item-flag">
+                      {{ t('skills.import.sameNameFlag') }}
+                    </span>
+                  </div>
                   <div class="search-item-desc">{{ item.description }}</div>
+                  <div class="search-item-trust">
+                    <span class="search-item-chip">
+                      <span class="search-item-chip-label">{{ t('skills.import.authorLabel') }}</span>
+                      <span>{{ item.author || '--' }}</span>
+                    </span>
+                    <span class="search-item-chip">
+                      <span class="search-item-chip-label">{{ t('skills.import.slugLabel') }}</span>
+                      <code class="search-item-slug">{{ item.slug }}</code>
+                    </span>
+                    <span v-if="item.version" class="search-item-chip">
+                      <span class="search-item-chip-label">v</span>
+                      <span>{{ item.version }}</span>
+                    </span>
+                  </div>
                   <div class="search-item-meta">
-                    <span v-if="item.author">{{ item.author }}</span>
-                    <span v-if="item.version">v{{ item.version }}</span>
+                    <span class="search-item-metric">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="7 10 12 15 17 10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                      </svg>
+                      {{ t('skills.import.downloads', { count: formatHubCount(item.downloads) }) }}
+                    </span>
+                    <span class="search-item-metric">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                        <path d="M12 2.5l2.94 5.96 6.58.96-4.76 4.64 1.12 6.56L12 17.52 6.12 20.62l1.12-6.56L2.48 9.42l6.58-.96L12 2.5z"/>
+                      </svg>
+                      {{ formatHubCount(item.stars) }}
+                    </span>
+                  </div>
+                  <a class="search-item-source" :href="getHubSourceUrl(item)" target="_blank" rel="noopener noreferrer">
+                    <span class="search-item-source-label">{{ t('skills.import.sourceLabel') }}</span>
+                    <span class="search-item-source-link">{{ formatHubSourceLabel(item) }}</span>
+                  </a>
+                  <div v-if="isDuplicateHubName(item.name)" class="search-item-warning">
+                    {{ t('skills.import.sameNameWarning') }}
                   </div>
                 </div>
               </div>
@@ -148,12 +186,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { mcToast } from '@/composables/useMcToast'
 import { useFileDrop } from '@/composables/useFileDrop'
 import { skillInstallApi } from '@/api/index'
-import type { InstallTask, HubSkillInfo } from '@/types/index'
+import type { InstallTask, HubSkillInfo, HubSkillStats } from '@/types/index'
 
 const props = defineProps<{ visible: boolean }>()
 // RFC-090 §4.4 — when install completes, hand the parent the skill
@@ -165,7 +203,7 @@ const emit = defineEmits<{
   (e: 'installed', payload?: { name?: string }): void
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const activeTab = ref<'url' | 'search' | 'zip'>('url')
 const urlInput = ref('')
@@ -181,11 +219,26 @@ const zipFile = ref<File | null>(null)
 const zipInputRef = ref<HTMLInputElement | null>(null)
 const { isDragging, onDragEnter, onDragLeave, onDrop } = useFileDrop(handleDroppedZip)
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let latestSearchSeq = 0
+
+const duplicateHubNames = computed(() => {
+  const counts = new Map<string, number>()
+  for (const item of searchResults.value) {
+    const key = normalizeHubName(item.name)
+    if (!key) continue
+    counts.set(key, (counts.get(key) || 0) + 1)
+  }
+  return new Set(Array.from(counts.entries())
+    .filter(([, count]) => count > 1)
+    .map(([name]) => name))
+})
 
 watch(() => props.visible, (val) => {
   if (!val) {
     stopPolling()
     currentTask.value = null
+    searching.value = false
+    latestSearchSeq += 1
   }
 })
 
@@ -294,6 +347,38 @@ function formatSize(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
+function formatHubCount(count?: number | null): string {
+  if (count == null) return '--'
+  return new Intl.NumberFormat(locale.value).format(count)
+}
+
+function normalizeHubName(name?: string | null): string {
+  return name?.trim().toLowerCase() || ''
+}
+
+function isDuplicateHubName(name?: string | null): boolean {
+  const key = normalizeHubName(name)
+  return key ? duplicateHubNames.value.has(key) : false
+}
+
+function getHubSourceUrl(item: HubSkillInfo): string {
+  return item.bundleUrl || `https://clawhub.ai/skills/${item.slug}`
+}
+
+function formatHubSourceLabel(item: HubSkillInfo): string {
+  return getHubSourceUrl(item).replace(/^https?:\/\//, '')
+}
+
+function compareHubItems(a: HubSkillInfo, b: HubSkillInfo): number {
+  const downloadsDiff = (b.downloads ?? -1) - (a.downloads ?? -1)
+  if (downloadsDiff !== 0) return downloadsDiff
+
+  const starsDiff = (b.stars ?? -1) - (a.stars ?? -1)
+  if (starsDiff !== 0) return starsDiff
+
+  return (a.name || a.slug).localeCompare(b.name || b.slug)
+}
+
 async function uploadZip() {
   if (!zipFile.value) return
   if (zipFile.value.size > 50 * 1024 * 1024) {
@@ -319,18 +404,56 @@ async function uploadZip() {
 async function doSearch() {
   const q = searchQuery.value.trim()
   if (!q) return
+  const searchSeq = ++latestSearchSeq
   searching.value = true
   searchDone.value = false
   try {
     const res: any = await skillInstallApi.searchHub(q)
+    if (searchSeq !== latestSearchSeq) return
     searchResults.value = res.data || []
     searchDone.value = true
+    void loadHubStats(searchSeq, searchResults.value)
   } catch (e: any) {
+    if (searchSeq !== latestSearchSeq) return
     mcToast.error(e?.message || t('skills.import.searchFailed'))
     searchResults.value = []
     searchDone.value = true
   } finally {
-    searching.value = false
+    if (searchSeq === latestSearchSeq) {
+      searching.value = false
+    }
+  }
+}
+
+async function loadHubStats(searchSeq: number, items: HubSkillInfo[]) {
+  const slugs = items
+    .map(item => item.slug?.trim())
+    .filter((slug): slug is string => !!slug)
+  if (slugs.length === 0) return
+
+  await Promise.allSettled(slugs.map(async slug => {
+    try {
+      const res: any = await skillInstallApi.getHubStats([slug])
+      if (searchSeq !== latestSearchSeq) return
+      const statsBySlug = (res.data || {}) as Record<string, HubSkillStats>
+      const stats = statsBySlug[slug]
+      if (!stats) return
+      searchResults.value = searchResults.value.map(item => {
+        if (item.slug !== slug) return item
+        return {
+          ...item,
+          downloads: stats.downloads ?? item.downloads,
+          stars: stats.stars ?? item.stars,
+          version: stats.version || item.version,
+          bundleUrl: stats.version ? `https://clawhub.ai/skills/${item.slug}@${stats.version}` : item.bundleUrl,
+        }
+      })
+    } catch {
+      // stats are best-effort; keep the base search list responsive
+    }
+  }))
+  if (searchSeq === latestSearchSeq) {
+    searchResults.value = [...searchResults.value].sort(compareHubItems)
   }
 }
 
@@ -389,10 +512,23 @@ function getStatusLabel(status: string): string {
 .search-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid var(--mc-border); border-radius: 8px; background: var(--mc-bg); }
 .search-item:hover { border-color: var(--mc-primary-light); }
 .search-item-info { display: flex; gap: 10px; align-items: flex-start; overflow: hidden; }
+.search-item-content { min-width: 0; }
 .search-item-icon { font-size: 20px; flex-shrink: 0; }
+.search-item-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 2px; }
 .search-item-name { font-size: 14px; font-weight: 600; color: var(--mc-text-primary); }
+.search-item-flag { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: rgba(217,119,87,0.12); color: var(--mc-primary); font-weight: 600; }
 .search-item-desc { font-size: 12px; color: var(--mc-text-secondary); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.search-item-trust { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.search-item-chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 8px; border-radius: 999px; background: var(--mc-bg-sunken); color: var(--mc-text-secondary); font-size: 11px; }
+.search-item-chip-label { color: var(--mc-text-tertiary); white-space: nowrap; }
+.search-item-slug { font-size: 11px; color: var(--mc-text-primary); font-family: 'JetBrains Mono', monospace; }
 .search-item-meta { display: flex; gap: 8px; margin-top: 2px; font-size: 11px; color: var(--mc-text-tertiary); }
+.search-item-metric { display: inline-flex; align-items: center; gap: 4px; }
+.search-item-source { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; font-size: 11px; color: var(--mc-text-tertiary); text-decoration: none; }
+.search-item-source:hover .search-item-source-link { color: var(--mc-primary); text-decoration: underline; }
+.search-item-source-label { color: var(--mc-text-tertiary); white-space: nowrap; }
+.search-item-source-link { color: var(--mc-text-secondary); font-family: 'JetBrains Mono', monospace; word-break: break-all; }
+.search-item-warning { margin-top: 6px; font-size: 11px; color: var(--mc-primary); }
 .search-empty { text-align: center; padding: 20px; color: var(--mc-text-tertiary); font-size: 14px; }
 
 .install-progress { margin-top: 16px; padding: 12px; border: 1px solid var(--mc-border); border-radius: 8px; background: var(--mc-bg); }

@@ -46,7 +46,12 @@ class SkillHubClientTest {
                       "displayName": "Feishu Room Booking",
                       "summary": "Book meeting rooms on Feishu/Lark.",
                       "version": null,
-                      "updatedAt": 1777359717617
+                      "updatedAt": 1777359717617,
+                      "ownerHandle": "qiushibang",
+                      "owner": {
+                        "displayName": "qiushibang",
+                        "image": "https://avatars.githubusercontent.com/u/1?v=4"
+                      }
                     }
                   ]
                 }
@@ -63,6 +68,9 @@ class SkillHubClientTest {
                 "displayName must populate name (was blank in the bug report)");
         assertEquals("Book meeting rooms on Feishu/Lark.", info.getDescription(),
                 "summary must populate description");
+        assertEquals("qiushibang", info.getAuthor());
+        assertEquals("https://clawhub.ai/skills/feishu-room-booking", info.getBundleUrl());
+        assertNull(info.getIcon(), "owner avatar URL must not be treated as the skill icon");
     }
 
     @Test
@@ -96,7 +104,11 @@ class SkillHubClientTest {
                   "skill": {
                     "slug": "feishu-room-booking",
                     "displayName": "Feishu Room Booking",
-                    "summary": "Book meeting rooms on Feishu."
+                    "summary": "Book meeting rooms on Feishu.",
+                    "stats": {
+                      "downloads": 3033,
+                      "stars": 1
+                    }
                   },
                   "latestVersion": {
                     "version": "2.9.0",
@@ -117,6 +129,8 @@ class SkillHubClientTest {
         assertEquals("Book meeting rooms on Feishu.", recordField(metadata, "summary"));
         assertEquals("2.9.0", recordField(metadata, "version"));
         assertEquals("qiushibang", recordField(metadata, "owner"));
+        assertEquals(3033, recordField(metadata, "downloads"));
+        assertEquals(1, recordField(metadata, "stars"));
     }
 
     @Test

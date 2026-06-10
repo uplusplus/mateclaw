@@ -33,5 +33,6 @@ public class HubSkillInfo {
     private String icon;
     private List<String> tags;
     private Integer downloads;
+    private Integer stars;
     private String bundleUrl;
 }
