@@ -851,15 +851,12 @@ const latestSingleCallPromptTokensForWindowUsage = computed(() => {
   const lastWithUsage = messages.value.findLast(
     (message) => {
       if (message.role !== 'assistant') return false
-      const promptTokens = typeof message.lastPromptTokens === 'number'
-        ? message.lastPromptTokens
-        : message.promptTokens
-      if (typeof promptTokens !== 'number' || promptTokens <= 0) return false
+      if (typeof message.lastPromptTokens !== 'number' || message.lastPromptTokens <= 0) return false
       if (!providerId || !modelName) return true
       return message.runtimeProvider === providerId && message.runtimeModel === modelName
     },
   )
-  return lastWithUsage?.lastPromptTokens ?? lastWithUsage?.promptTokens ?? 0
+  return lastWithUsage?.lastPromptTokens ?? 0
 })
 
 const modelWindowUsageRatio = computed<number | null>(() => {

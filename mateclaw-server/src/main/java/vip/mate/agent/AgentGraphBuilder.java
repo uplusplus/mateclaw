@@ -614,6 +614,7 @@ public class AgentGraphBuilder {
                     // Token Usage
                     .addStrategy(MateClawStateKeys.PROMPT_TOKENS, KeyStrategy.REPLACE)
                     .addStrategy(MateClawStateKeys.COMPLETION_TOKENS, KeyStrategy.REPLACE)
+                    .addStrategy(MateClawStateKeys.LAST_PROMPT_TOKENS, KeyStrategy.REPLACE)
                     .addStrategy(MateClawStateKeys.LLM_CALL_COUNT, KeyStrategy.REPLACE)
                     .addStrategy(MateClawStateKeys.RUNTIME_MODEL_NAME, KeyStrategy.REPLACE)
                     .addStrategy(MateClawStateKeys.RUNTIME_PROVIDER_ID, KeyStrategy.REPLACE)
@@ -880,6 +881,7 @@ public class AgentGraphBuilder {
                     // Token Usage
                     .addStrategy(MateClawStateKeys.PROMPT_TOKENS, KeyStrategy.REPLACE)
                     .addStrategy(MateClawStateKeys.COMPLETION_TOKENS, KeyStrategy.REPLACE)
+                    .addStrategy(MateClawStateKeys.LAST_PROMPT_TOKENS, KeyStrategy.REPLACE)
                     .addStrategy(MateClawStateKeys.RUNTIME_MODEL_NAME, KeyStrategy.REPLACE)
                     .addStrategy(MateClawStateKeys.RUNTIME_PROVIDER_ID, KeyStrategy.REPLACE)
                     // SourceEvidenceLedger: ActionNode 把每轮 ToolResponse 抽取出的
