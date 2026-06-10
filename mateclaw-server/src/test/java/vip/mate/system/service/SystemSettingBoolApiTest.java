@@ -10,6 +10,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import vip.mate.config.ConversationWindowProperties;
 import vip.mate.system.model.SystemSettingEntity;
 import vip.mate.system.repository.SystemSettingMapper;
 
@@ -41,7 +42,7 @@ class SystemSettingBoolApiTest {
 
     @BeforeEach
     void setUp() {
-        service = new SystemSettingService(mapper);
+        service = new SystemSettingService(mapper, new ConversationWindowProperties());
     }
 
     private SystemSettingEntity row(String value) {
