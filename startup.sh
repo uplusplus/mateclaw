@@ -49,6 +49,7 @@ start_backend() {
     pushd mateclaw-server
     mvn spring-boot:run  &
     popd
+    sleep 5
     log_info "后端服务已启动 (PID: simulated_pid_backend)。"
 }
 
