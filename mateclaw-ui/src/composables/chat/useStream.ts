@@ -67,6 +67,7 @@ export type SSEEventType =
   | 'stream_started'
   | 'context_prepared'
   | 'llm_request_sent'
+  | 'llm_usage'
   | 'thinking_start'
   | 'thinking_end'
   | 'iteration_start'

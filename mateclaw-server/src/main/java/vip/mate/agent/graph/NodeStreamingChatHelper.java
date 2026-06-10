@@ -9,6 +9,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import vip.mate.agent.context.TokenEstimator;
 import vip.mate.channel.web.ChatStreamTracker;
 import vip.mate.llm.chatmodel.AssistantThinkingRelay;
 import vip.mate.llm.chatmodel.LlmCallDiagnostics;
@@ -784,8 +785,10 @@ public class NodeStreamingChatHelper {
         LlmCallDiagnostics.recordRequest(diagnosticsToken, "spring-ai/prompt_preview",
                 buildPromptPreview(outbound));
         try {
-            return doStreamCallInner(chatModel, outbound, conversationId, phase,
+            StreamResult result = doStreamCallInner(chatModel, outbound, conversationId, phase,
                     broadcast, attempt, diagnosticsToken);
+            broadcastUsage(conversationId, phase, broadcast, result);
+            return result;
         } finally {
             LlmCallDiagnostics.clear(diagnosticsToken);
             // Idempotent: if consumer already took the entry, discard is a no-op.
@@ -796,6 +799,20 @@ public class NodeStreamingChatHelper {
                 }
             }
         }
+    }
+
+    private void broadcastUsage(String conversationId, String phase, boolean broadcast, StreamResult result) {
+        if (!broadcast || streamTracker == null || conversationId == null || conversationId.isBlank()
+                || result == null || result.promptTokens() <= 0) {
+            return;
+        }
+        streamTracker.broadcastObject(conversationId, "llm_usage", Map.of(
+                "lastPromptTokens", result.promptTokens(),
+                "promptTokens", result.promptTokens(),
+                "completionTokens", Math.max(0, result.completionTokens()),
+                "phase", phase != null ? phase : "",
+                "timestamp", System.currentTimeMillis()
+        ));
     }
 
     /**
@@ -894,9 +911,11 @@ public class NodeStreamingChatHelper {
         if (broadcast && streamTracker != null && conversationId != null && !conversationId.isEmpty()) {
             int messageCount = prompt.getInstructions() != null ? prompt.getInstructions().size() : 0;
             int contextChars = approximatePromptChars(prompt);
+            int estimatedPromptTokens = TokenEstimator.estimateTokens(prompt.getInstructions());
             streamTracker.broadcastObject(conversationId, "context_prepared", Map.of(
                     "messages", messageCount,
                     "contextChars", contextChars,
+                    "estimatedPromptTokens", estimatedPromptTokens,
                     "timestamp", System.currentTimeMillis()
             ));
             String modelId = identifyModel(chatModel);

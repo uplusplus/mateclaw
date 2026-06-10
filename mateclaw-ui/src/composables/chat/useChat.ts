@@ -1222,11 +1222,33 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   stream.on('context_prepared', (data) => {
     if (isStaleEvent(data)) return
     lifecycleStage.value = { stage: 'context_prepared', detail: data, since: Date.now() }
+    if (!currentAssistantId.value) return
+    const estimated = data.estimatedPromptTokens
+    if (typeof estimated !== 'number' || estimated <= 0) return
+    const msgIndex = messages.value.findIndex(m => m.id === currentAssistantId.value)
+    if (msgIndex < 0) return
+    const msg = messages.value[msgIndex]
+    msg.lastPromptTokens = estimated
+    messages.value[msgIndex] = { ...msg }
   })
 
   stream.on('llm_request_sent', (data) => {
     if (isStaleEvent(data)) return
     lifecycleStage.value = { stage: 'llm_request_sent', detail: data, since: Date.now() }
+  })
+
+  stream.on('llm_usage', (data) => {
+    if (isStaleEvent(data)) return
+    if (!currentAssistantId.value) return
+    const msgIndex = messages.value.findIndex(m => m.id === currentAssistantId.value)
+    if (msgIndex < 0) return
+    const msg = messages.value[msgIndex]
+    if (typeof data.lastPromptTokens === 'number' && data.lastPromptTokens > 0) {
+      msg.lastPromptTokens = data.lastPromptTokens
+    } else if (typeof data.promptTokens === 'number' && data.promptTokens > 0) {
+      msg.lastPromptTokens = data.promptTokens
+    }
+    messages.value[msgIndex] = { ...msg }
   })
 
   // ===== Per-iteration boundaries (single-turn UX overhaul) =====

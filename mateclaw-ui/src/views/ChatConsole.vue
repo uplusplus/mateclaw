@@ -853,6 +853,7 @@ const latestSingleCallPromptTokensForWindowUsage = computed(() => {
       if (message.role !== 'assistant') return false
       if (typeof message.lastPromptTokens !== 'number' || message.lastPromptTokens <= 0) return false
       if (!providerId || !modelName) return true
+      if (!message.runtimeProvider && !message.runtimeModel) return true
       return message.runtimeProvider === providerId && message.runtimeModel === modelName
     },
   )
