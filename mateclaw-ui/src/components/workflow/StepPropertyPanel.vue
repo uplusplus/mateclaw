@@ -455,9 +455,9 @@ function onDispatchChannelToggle(channelType: string, checked: boolean) {
   }
   patchMode({ channels: Array.from(next), targets })
 }
-function onDispatchTargetInput(channelType: string, raw: string) {
+function onDispatchTargetInput(channelType: string, raw: unknown) {
   const targets = dispatchTargets()
-  const value = raw.trim()
+  const value = raw == null ? '' : String(raw).trim()
   if (value) targets[channelType] = value
   else delete targets[channelType]
   patchMode({ targets })

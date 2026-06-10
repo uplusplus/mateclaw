@@ -104,6 +104,8 @@ export interface Message {
   // Token 统计
   promptTokens?: number
   completionTokens?: number
+  /** Prompt tokens for the most recent single LLM call in this assistant turn. */
+  lastPromptTokens?: number
   // Runtime model attribution (assistant messages): the model that actually produced this reply
   runtimeModel?: string
   runtimeProvider?: string
@@ -252,6 +254,8 @@ export interface MessageSegment {
 
 export interface MessageMetadata {
   currentPhase?: string
+  /** Prompt tokens for the most recent single LLM call in this assistant turn. */
+  lastPromptTokens?: number
   toolCalls?: ToolCallMeta[]
   plan?: PlanMeta
   pendingApproval?: PendingApprovalMeta

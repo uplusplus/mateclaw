@@ -100,8 +100,12 @@ export function useProviderDiscovery(deps: ListDeps) {
     }
   }
 
-  function normalizeMaxInputTokens(raw: string) {
-    const text = raw.trim()
+  function normalizeDraftText(raw: unknown) {
+    return raw == null ? '' : String(raw).trim()
+  }
+
+  function normalizeMaxInputTokens(raw: unknown) {
+    const text = normalizeDraftText(raw)
     if (!text) {
       throw new Error(t('settings.model.inputWindowInvalid'))
     }
@@ -142,8 +146,8 @@ export function useProviderDiscovery(deps: ListDeps) {
     modelConfigDraft.searchStrategy = detail.searchStrategy || ''
   }
 
-  function normalizeOptionalNumber(raw: string, label: string) {
-    const text = raw.trim()
+  function normalizeOptionalNumber(raw: unknown, label: string) {
+    const text = normalizeDraftText(raw)
     if (!text) return null
     const value = Number(text)
     if (!Number.isFinite(value)) {
@@ -152,8 +156,8 @@ export function useProviderDiscovery(deps: ListDeps) {
     return value
   }
 
-  function normalizeOptionalInteger(raw: string, label: string) {
-    const text = raw.trim()
+  function normalizeOptionalInteger(raw: unknown, label: string) {
+    const text = normalizeDraftText(raw)
     if (!text) return null
     const value = Number(text)
     if (!Number.isInteger(value) || value <= 0) {

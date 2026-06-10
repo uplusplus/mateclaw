@@ -224,7 +224,10 @@ export default {
     switchModelFailed: '切换模型失败',
     searchModel: '搜索模型…',
     noMatchModel: '没有匹配的模型',
-    modelWindowUsage: '上下文占用 {used} / {total}（{percent}%）',
+    modelWindowUsageBadge: '本次调用 {used}/{total}（{percent}%）',
+    modelWindowUsage: '最近一次 LLM 调用窗口占用 {used} / {total}（{percent}%）',
+    modelWindowNotConfigured: '窗口未配置',
+    modelWindowNotConfiguredTitle: '当前模型未配置输入窗口大小；请到 设置 / 模型 / 管理模型 中填写输入窗口。',
     // RFC-073: liveness hints shown in the model dropdown header
     modelLivenessUnprobed: '正在检查可用性',
     modelLivenessCooldown: '冷却中（{seconds} 秒后自动恢复）',

@@ -132,7 +132,12 @@
         >{{ t('chat.queuedCancel') }}</button>
       </div>
 
-      <div class="input-area">
+      <div
+        class="input-area"
+        :class="windowUsageClass"
+        :style="windowUsageStyle"
+        :title="windowUsageTitle || undefined"
+      >
       <SkillSlashMenu
         v-if="slashActive"
         ref="slashMenuRef"
@@ -274,6 +279,12 @@ interface Props {
   queueSize?: number
   /** 是否启用 Talk Mode 按钮 */
   enableTalkMode?: boolean
+  /** 最近一次 LLM 调用占当前模型输入窗口的比例，0-1+。 */
+  windowUsageRatio?: number | null
+  /** 窗口占用悬浮提示。 */
+  windowUsageTitle?: string
+  /** 窗口占用提示等级。 */
+  windowUsageTone?: 'neutral' | 'warn' | 'danger'
   /** 深度思考开关状态 */
   thinkingEnabled?: boolean
   /**
@@ -304,6 +315,9 @@ const props = withDefaults(defineProps<Props>(), {
   queuedMessage: null,
   queueSize: 0,
   enableTalkMode: false,
+  windowUsageRatio: null,
+  windowUsageTitle: '',
+  windowUsageTone: 'neutral',
   thinkingEnabled: false,
   thinkingSupported: true,
   skillsEnabled: true,
@@ -464,6 +478,22 @@ const inputPlaceholder = computed(() => {
   }
   return props.placeholder
 })
+
+const windowUsagePercent = computed(() => {
+  const ratio = props.windowUsageRatio
+  if (typeof ratio !== 'number' || !Number.isFinite(ratio) || ratio <= 0) return 0
+  return Math.min(100, Math.max(0, ratio * 100))
+})
+
+const windowUsageClass = computed(() => ({
+  'has-window-usage': windowUsagePercent.value > 0,
+  'window-usage-warn': props.windowUsageTone === 'warn',
+  'window-usage-danger': props.windowUsageTone === 'danger',
+}))
+
+const windowUsageStyle = computed(() => ({
+  '--window-usage-width': `${windowUsagePercent.value}%`,
+}))
 
 // 处理提交
 const handleSubmit = () => {
@@ -695,6 +725,36 @@ defineExpose({
   padding: 8px 10px 8px 12px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04);
   transition: box-shadow 0.15s;
+  overflow: hidden;
+  --window-usage-width: 0%;
+  --window-usage-color: rgba(34, 197, 94, 0.12);
+}
+
+.input-area.has-window-usage::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      90deg,
+      var(--window-usage-color) 0 var(--window-usage-width),
+      transparent var(--window-usage-width) 100%
+    );
+}
+
+.input-area.window-usage-warn {
+  --window-usage-color: rgba(245, 158, 11, 0.16);
+}
+
+.input-area.window-usage-danger {
+  --window-usage-color: rgba(239, 68, 68, 0.16);
+}
+
+.input-area > * {
+  position: relative;
+  z-index: 1;
 }
 
 .chat-input-wrapper.is-focused .input-area {

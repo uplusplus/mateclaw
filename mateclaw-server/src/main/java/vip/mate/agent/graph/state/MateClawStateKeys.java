@@ -145,6 +145,8 @@ public final class MateClawStateKeys {
     // ===== Token Usage 累计（REPLACE 策略，节点内累加后写回）=====
     public static final String PROMPT_TOKENS = "prompt_tokens";
     public static final String COMPLETION_TOKENS = "completion_tokens";
+    /** 最近一次 LLM 调用的 prompt tokens，用于展示单次上下文窗口占用。 */
+    public static final String LAST_PROMPT_TOKENS = "last_prompt_tokens";
 
     // ===== 运行时模型快照（REPLACE 策略，buildInitialState 注入）=====
     public static final String RUNTIME_MODEL_NAME = "runtime_model_name";

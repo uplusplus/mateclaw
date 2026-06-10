@@ -230,6 +230,9 @@
         :stream-phase="streamPhase"
         :queued-message="queuedMessage"
         :queue-size="queueSize"
+        :window-usage-ratio="modelWindowUsageRatio"
+        :window-usage-title="modelWindowUsageTitle"
+        :window-usage-tone="modelWindowUsageTone"
         @submit="handleSendMessage"
         @stop="handleStopStream"
         @cancel-queued="handleCancelQueued"
@@ -842,36 +845,47 @@ const activeModelMaxInputTokens = computed<number | null>(() => {
   return null
 })
 
-const latestPromptTokensForWindowUsage = computed(() => {
+const latestSingleCallPromptTokensForWindowUsage = computed(() => {
   const providerId = activeModels.value?.activeLlm?.providerId
   const modelName = activeModels.value?.activeLlm?.model
   const lastWithUsage = messages.value.findLast(
     (message) => {
       if (message.role !== 'assistant') return false
-      if (typeof message.promptTokens !== 'number' || message.promptTokens <= 0) return false
+      const promptTokens = typeof message.lastPromptTokens === 'number'
+        ? message.lastPromptTokens
+        : message.promptTokens
+      if (typeof promptTokens !== 'number' || promptTokens <= 0) return false
       if (!providerId || !modelName) return true
       return message.runtimeProvider === providerId && message.runtimeModel === modelName
     },
   )
-  return lastWithUsage?.promptTokens ?? 0
+  return lastWithUsage?.lastPromptTokens ?? lastWithUsage?.promptTokens ?? 0
 })
 
 const modelWindowUsageRatio = computed<number | null>(() => {
   const total = activeModelMaxInputTokens.value
   if (!total || total <= 0) return null
-  return latestPromptTokensForWindowUsage.value / total
+  return latestSingleCallPromptTokensForWindowUsage.value / total
 })
 
 const modelWindowUsageText = computed(() => {
   const total = activeModelMaxInputTokens.value
-  if (!total || total <= 0) return ''
-  return `${formatCompactTokens(latestPromptTokensForWindowUsage.value)} / ${formatCompactTokens(total)}`
+  if (!activeModelLabel.value) return ''
+  if (!total || total <= 0) return t('chat.modelWindowNotConfigured')
+  const used = latestSingleCallPromptTokensForWindowUsage.value
+  const percent = Math.max(0, Math.round((used / total) * 100))
+  return t('chat.modelWindowUsageBadge', {
+    used: formatCompactTokens(used),
+    total: formatCompactTokens(total),
+    percent,
+  })
 })
 
 const modelWindowUsageTitle = computed(() => {
   const total = activeModelMaxInputTokens.value
-  if (!total || total <= 0) return ''
-  const used = latestPromptTokensForWindowUsage.value
+  if (!activeModelLabel.value) return ''
+  if (!total || total <= 0) return t('chat.modelWindowNotConfiguredTitle')
+  const used = latestSingleCallPromptTokensForWindowUsage.value
   const percent = Math.max(0, Math.round((used / total) * 100))
   return t('chat.modelWindowUsage', {
     used: used.toLocaleString(),
@@ -881,6 +895,7 @@ const modelWindowUsageTitle = computed(() => {
 })
 
 const modelWindowUsageTone = computed<'neutral' | 'warn' | 'danger'>(() => {
+  if (activeModelLabel.value && !activeModelMaxInputTokens.value) return 'warn'
   const ratio = modelWindowUsageRatio.value
   if (ratio == null) return 'neutral'
   if (ratio >= 0.85) return 'danger'
@@ -2081,6 +2096,11 @@ function normalizeMessage(raw: Message): Message {
   // 保留后端返回的 token 字段（MessageVO 新增）
   if ((raw as any).promptTokens) msg.promptTokens = (raw as any).promptTokens
   if ((raw as any).completionTokens) msg.completionTokens = (raw as any).completionTokens
+  if ((raw as any).lastPromptTokens) {
+    msg.lastPromptTokens = (raw as any).lastPromptTokens
+  } else if (typeof msg.metadata?.lastPromptTokens === 'number') {
+    msg.lastPromptTokens = msg.metadata.lastPromptTokens
+  }
   if ((raw as any).runtimeModel) msg.runtimeModel = (raw as any).runtimeModel
   if ((raw as any).runtimeProvider) msg.runtimeProvider = (raw as any).runtimeProvider
 

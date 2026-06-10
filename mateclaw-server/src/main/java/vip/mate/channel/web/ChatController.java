@@ -1500,6 +1500,10 @@ public class ChatController {
                     if (segs instanceof java.util.List<?> list && !list.isEmpty()) {
                         payload.put("segments", segs);
                     }
+                    Object lastPrompt = parsed.get("lastPromptTokens");
+                    if (lastPrompt instanceof Number n && n.intValue() > 0) {
+                        payload.put("lastPromptTokens", n.intValue());
+                    }
                 } catch (Exception ignored) {
                     // Best-effort: malformed metadata just means the client falls
                     // back to its existing "wait for reload" reconcile path.
@@ -1710,6 +1714,7 @@ public class ChatController {
         private int segCounter = 0;
         private int promptTokens = 0;
         private int completionTokens = 0;
+        private int lastPromptTokens = 0;
         private String runtimeModelName = "";
         private String runtimeProviderId = "";
         private boolean awaitingApproval = false;
@@ -1756,6 +1761,7 @@ public class ChatController {
                     Map<String, Object> data = delta.eventData();
                     promptTokens = ((Number) data.getOrDefault("promptTokens", 0)).intValue();
                     completionTokens = ((Number) data.getOrDefault("completionTokens", 0)).intValue();
+                    lastPromptTokens = ((Number) data.getOrDefault("lastPromptTokens", promptTokens)).intValue();
                     runtimeModelName = String.valueOf(data.getOrDefault("runtimeModelName", ""));
                     runtimeProviderId = String.valueOf(data.getOrDefault("runtimeProviderId", ""));
                     return;
@@ -2020,6 +2026,7 @@ public class ChatController {
         String getThinking() { return thinking.toString().trim(); }
         int getPromptTokens() { return promptTokens; }
         int getCompletionTokens() { return completionTokens; }
+        int getLastPromptTokens() { return lastPromptTokens; }
         String getRuntimeModelName() { return runtimeModelName; }
         String getRuntimeProviderId() { return runtimeProviderId; }
         String getCurrentPhase() { return currentPhase; }
@@ -2074,6 +2081,9 @@ public class ChatController {
                 }
                 if (!currentPhase.isBlank()) {
                     metadata.put("currentPhase", currentPhase);
+                }
+                if (lastPromptTokens > 0) {
+                    metadata.put("lastPromptTokens", lastPromptTokens);
                 }
                 if (planId != null || !planSteps.isEmpty() || currentPlanStep != null) {
                     Map<String, Object> plan = new LinkedHashMap<>();

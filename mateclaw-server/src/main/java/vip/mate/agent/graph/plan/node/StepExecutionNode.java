@@ -205,6 +205,7 @@ public class StepExecutionNode implements NodeAction {
         String approvalToolName = null;
         int stepPromptTokens = 0;
         int stepCompletionTokens = 0;
+        int lastPromptTokens = state.value(MateClawStateKeys.LAST_PROMPT_TOKENS, 0);
 
         // RFC-052: any returnDirect tool that fires inside this step must
         // short-circuit the entire plan (not just this step). We accumulate
@@ -273,6 +274,7 @@ public class StepExecutionNode implements NodeAction {
 
                 stepPromptTokens += result.promptTokens();
                 stepCompletionTokens += result.completionTokens();
+                lastPromptTokens = result.promptTokens();
 
                 if (!result.thinking().isEmpty()) {
                     stepThinking = result.thinking();
@@ -373,6 +375,7 @@ public class StepExecutionNode implements NodeAction {
                         .thinkingStreamed(!stepThinking.isEmpty())
                         .put(MateClawStateKeys.PROMPT_TOKENS, state.value(MateClawStateKeys.PROMPT_TOKENS, 0) + stepPromptTokens)
                         .put(MateClawStateKeys.COMPLETION_TOKENS, state.value(MateClawStateKeys.COMPLETION_TOKENS, 0) + stepCompletionTokens)
+                        .put(MateClawStateKeys.LAST_PROMPT_TOKENS, lastPromptTokens)
                         .events(events)
                         .build();
             }
@@ -411,6 +414,7 @@ public class StepExecutionNode implements NodeAction {
                                 state.value(MateClawStateKeys.PROMPT_TOKENS, 0) + stepPromptTokens)
                         .put(MateClawStateKeys.COMPLETION_TOKENS,
                                 state.value(MateClawStateKeys.COMPLETION_TOKENS, 0) + stepCompletionTokens)
+                        .put(MateClawStateKeys.LAST_PROMPT_TOKENS, lastPromptTokens)
                         .events(events)
                         .build();
             }
@@ -441,6 +445,7 @@ public class StepExecutionNode implements NodeAction {
                     .contentStreamed(false)
                     .put(MateClawStateKeys.PROMPT_TOKENS, state.value(MateClawStateKeys.PROMPT_TOKENS, 0) + stepPromptTokens)
                     .put(MateClawStateKeys.COMPLETION_TOKENS, state.value(MateClawStateKeys.COMPLETION_TOKENS, 0) + stepCompletionTokens)
+                    .put(MateClawStateKeys.LAST_PROMPT_TOKENS, lastPromptTokens)
                     .events(events)
                     .build();
         }
@@ -485,6 +490,7 @@ public class StepExecutionNode implements NodeAction {
                 .thinkingStreamed(!stepThinking.isEmpty())
                 .put(MateClawStateKeys.PROMPT_TOKENS, state.value(MateClawStateKeys.PROMPT_TOKENS, 0) + stepPromptTokens)
                 .put(MateClawStateKeys.COMPLETION_TOKENS, state.value(MateClawStateKeys.COMPLETION_TOKENS, 0) + stepCompletionTokens)
+                .put(MateClawStateKeys.LAST_PROMPT_TOKENS, lastPromptTokens)
                 .events(events)
                 .build();
     }

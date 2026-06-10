@@ -258,6 +258,10 @@ public final class MateClawStateAccessor {
         return state.value(COMPLETION_TOKENS, 0);
     }
 
+    public int lastPromptTokens() {
+        return state.value(LAST_PROMPT_TOKENS, 0);
+    }
+
     public String runtimeModelName() {
         return state.value(RUNTIME_MODEL_NAME, "");
     }
@@ -523,6 +527,7 @@ public final class MateClawStateAccessor {
             int existingCompletion = currentState.value(COMPLETION_TOKENS, 0);
             map.put(PROMPT_TOKENS, existingPrompt + result.promptTokens());
             map.put(COMPLETION_TOKENS, existingCompletion + result.completionTokens());
+            map.put(LAST_PROMPT_TOKENS, result.promptTokens());
             return this;
         }
 

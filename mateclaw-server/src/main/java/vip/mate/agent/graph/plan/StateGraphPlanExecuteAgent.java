@@ -142,6 +142,7 @@ public class StateGraphPlanExecuteAgent extends BaseAgent implements StructuredS
         AtomicInteger sentEventCount = new AtomicInteger(0);
         AtomicInteger finalPromptTokens = new AtomicInteger(0);
         AtomicInteger finalCompletionTokens = new AtomicInteger(0);
+        AtomicInteger finalLastPromptTokens = new AtomicInteger(0);
         AtomicReference<String> finalModelName = new AtomicReference<>("");
         AtomicReference<String> finalProviderId = new AtomicReference<>("");
         // 去重：记录上一次已持久化的 step 结果和 thinking，防止 PlanSummaryNode 重复 emit 上一步内容
@@ -203,6 +204,7 @@ public class StateGraphPlanExecuteAgent extends BaseAgent implements StructuredS
                     // 3. 更新最新累计 token usage
                     finalPromptTokens.set(output.state().value(MateClawStateKeys.PROMPT_TOKENS, 0));
                     finalCompletionTokens.set(output.state().value(MateClawStateKeys.COMPLETION_TOKENS, 0));
+                    finalLastPromptTokens.set(output.state().value(MateClawStateKeys.LAST_PROMPT_TOKENS, 0));
                     finalModelName.set(output.state().value(MateClawStateKeys.RUNTIME_MODEL_NAME, ""));
                     finalProviderId.set(output.state().value(MateClawStateKeys.RUNTIME_PROVIDER_ID, ""));
 
@@ -213,6 +215,7 @@ public class StateGraphPlanExecuteAgent extends BaseAgent implements StructuredS
                         return AgentService.StreamDelta.event("_usage_final", Map.of(
                                 "promptTokens", finalPromptTokens.get(),
                                 "completionTokens", finalCompletionTokens.get(),
+                                "lastPromptTokens", finalLastPromptTokens.get(),
                                 "runtimeModelName", finalModelName.get(),
                                 "runtimeProviderId", finalProviderId.get()
                         ));
@@ -297,6 +300,7 @@ public class StateGraphPlanExecuteAgent extends BaseAgent implements StructuredS
         inputs.put(MateClawStateKeys.REQUESTER_ID, "");
         inputs.put(MateClawStateKeys.PROMPT_TOKENS, 0);
         inputs.put(MateClawStateKeys.COMPLETION_TOKENS, 0);
+        inputs.put(MateClawStateKeys.LAST_PROMPT_TOKENS, 0);
         inputs.put(MateClawStateKeys.RUNTIME_MODEL_NAME, modelName != null ? modelName : "");
         inputs.put(MateClawStateKeys.RUNTIME_PROVIDER_ID, runtimeProviderId != null ? runtimeProviderId : "");
         inputs.put(MateClawStateKeys.TRACE_ID, UUID.randomUUID().toString().substring(0, 8));

@@ -224,7 +224,10 @@ export default {
     switchModelFailed: 'Failed to switch model',
     searchModel: 'Search models…',
     noMatchModel: 'No matching models',
-    modelWindowUsage: 'Context usage {used} / {total} ({percent}%)',
+    modelWindowUsageBadge: 'Call {used}/{total} ({percent}%)',
+    modelWindowUsage: 'Latest LLM call window usage {used} / {total} ({percent}%)',
+    modelWindowNotConfigured: 'Window not set',
+    modelWindowNotConfiguredTitle: 'The current model has no input window configured. Set it in Settings / Models / Manage Models.',
     // RFC-073: liveness hints shown in the model dropdown header
     modelLivenessUnprobed: 'Checking availability',
     modelLivenessCooldown: 'In cooldown ({seconds}s remaining)',
