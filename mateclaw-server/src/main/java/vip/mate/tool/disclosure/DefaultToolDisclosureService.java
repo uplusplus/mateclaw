@@ -56,6 +56,13 @@ public class DefaultToolDisclosureService implements ToolDisclosureService {
 
     @Value("${mateclaw.tools.disclosure.mode:progressive}")
     private String disclosureMode;
+    /**
+     * Auto-demote noisy MCP servers whose tool count exceeds this threshold
+     * when the admin has not explicitly set disclosureTier on the server row.
+     * 0 disables the heuristic.
+     */
+    @Value("${mateclaw.tools.disclosure.mcp-auto-extension-threshold:8}")
+    private int mcpAutoExtensionThreshold;
 
     private volatile Snapshot snapshot;
 
@@ -89,7 +96,15 @@ public class DefaultToolDisclosureService implements ToolDisclosureService {
         }
         Long serverId = snap.mcpToolToServerId.get(toolName);
         if (serverId != null) {
-            return snap.serverTierById.getOrDefault(serverId, DisclosureTier.CORE);
+            DisclosureTier explicitTier = snap.serverTierById.get(serverId);
+            if (explicitTier != null) {
+                return explicitTier;
+            }
+            int toolCount = snap.serverToolCountById.getOrDefault(serverId, 0);
+            if (mcpAutoExtensionThreshold > 0 && toolCount > mcpAutoExtensionThreshold) {
+                return DisclosureTier.EXTENSION;
+            }
+            return DisclosureTier.CORE;
         }
         // Unknown source (ACP / dynamic-skill / plugin) — keep visible.
         return DisclosureTier.CORE;
@@ -227,10 +242,12 @@ public class DefaultToolDisclosureService implements ToolDisclosureService {
         }
 
         Map<String, Long> mcpToolToServerId = new LinkedHashMap<>();
+        Map<Long, Integer> serverToolCountById = new LinkedHashMap<>();
         try {
             for (AvailableToolDTO d : availableToolService.listAvailable()) {
                 if ("mcp".equals(d.getSource()) && d.getName() != null && d.getProviderId() != null) {
                     mcpToolToServerId.put(d.getName(), d.getProviderId());
+                    serverToolCountById.merge(d.getProviderId(), 1, Integer::sum);
                 }
             }
         } catch (Exception e) {
@@ -241,7 +258,9 @@ public class DefaultToolDisclosureService implements ToolDisclosureService {
         Map<Long, String> serverNameById = new LinkedHashMap<>();
         try {
             for (McpServerEntity s : mcpServerService.listAll()) {
-                serverTierById.put(s.getId(), DisclosureTier.fromToken(s.getDisclosureTier()));
+                if (s.getDisclosureTier() != null && !s.getDisclosureTier().isBlank()) {
+                    serverTierById.put(s.getId(), DisclosureTier.fromToken(s.getDisclosureTier()));
+                }
                 serverNameById.put(s.getId(), s.getName());
             }
         } catch (Exception e) {
@@ -249,12 +268,14 @@ public class DefaultToolDisclosureService implements ToolDisclosureService {
                     e.getMessage());
         }
 
-        return new Snapshot(builtinTierByName, mcpToolToServerId, serverTierById, serverNameById,
+        return new Snapshot(builtinTierByName, mcpToolToServerId, serverToolCountById,
+                serverTierById, serverNameById,
                 System.currentTimeMillis());
     }
 
     private record Snapshot(Map<String, DisclosureTier> builtinTierByName,
                             Map<String, Long> mcpToolToServerId,
+                            Map<Long, Integer> serverToolCountById,
                             Map<Long, DisclosureTier> serverTierById,
                             Map<Long, String> serverNameById,
                             long builtAtMillis) {
