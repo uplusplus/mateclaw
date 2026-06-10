@@ -12,6 +12,7 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import reactor.core.publisher.Flux;
 import vip.mate.channel.web.ChatStreamTracker;
+import vip.mate.llm.chatmodel.LlmCallDiagnostics;
 import vip.mate.llm.failover.AvailableProviderPool;
 import vip.mate.llm.failover.AvailableProviderPool.RemovalSource;
 import vip.mate.llm.failover.FallbackEntry;
@@ -77,6 +78,22 @@ class NodeStreamingChatHelperPoolTest {
         when(resp.getResult()).thenReturn(gen);
         when(resp.getMetadata()).thenReturn(null);
         when(m.stream(any(Prompt.class))).thenReturn(Flux.just(resp));
+        return m;
+    }
+
+    private static ChatModel emptyResponseModelWithDiagnostics(String requestPreview, String responsePreview) {
+        ChatModel m = mock(ChatModel.class);
+        Generation gen = new Generation(new AssistantMessage(""), ChatGenerationMetadata.NULL);
+        ChatResponse resp = mock(ChatResponse.class);
+        when(resp.getResults()).thenReturn(List.of(gen));
+        when(resp.getResult()).thenReturn(gen);
+        when(resp.getMetadata()).thenReturn(null);
+        when(m.stream(any(Prompt.class))).thenAnswer(invocation -> {
+            LlmCallDiagnostics.recordRequestCurrent("mock-provider", requestPreview);
+            String token = LlmCallDiagnostics.currentToken();
+            LlmCallDiagnostics.recordResponseChunk(token, "mock-provider", responsePreview);
+            return Flux.just(resp);
+        });
         return m;
     }
 
@@ -223,6 +240,26 @@ class NodeStreamingChatHelperPoolTest {
                 "SOFT errors must NOT evict — health tracker cooldown handles transient blips");
         assertTrue(healthTracker.snapshot().get("openai").consecutiveFailures() > 0,
                 "SOFT failure must still be recorded by the health tracker");
+    }
+
+    @Test
+    @DisplayName("EMPTY_RESPONSE error surfaces raw request and raw response previews")
+    void emptyResponseErrorIncludesDiagnostics() {
+        ChatModel primary = emptyResponseModelWithDiagnostics(
+                "{\"request\":\"payload\"}",
+                "{\"response\":\"chunk\"}");
+        var helper = new NodeStreamingChatHelper(streamTracker);
+
+        var result = helper.streamCall(primary, smallPrompt(), "conv-empty-diag", "reasoning");
+
+        assertEquals(NodeStreamingChatHelper.ErrorType.EMPTY_RESPONSE, result.errorType());
+        assertNotNull(result.errorMessage());
+        assertTrue(result.errorMessage().contains("LLM 返回空响应"));
+        assertTrue(result.errorMessage().contains("[原始请求数据]"));
+        assertTrue(result.errorMessage().contains("{\"request\":\"payload\"}"));
+        assertTrue(result.errorMessage().contains("[原始返回数据]"));
+        assertTrue(result.errorMessage().contains("{\"response\":\"chunk\"}"));
+        assertTrue(result.errorMessage().contains("[观测摘要]"));
     }
 
     // ============================================================

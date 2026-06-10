@@ -18,6 +18,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import vip.mate.exception.MateClawException;
+import vip.mate.llm.chatmodel.LlmCallDiagnostics;
 
 import java.util.ArrayList;
 import java.util.Base64;
@@ -72,6 +73,9 @@ public class GeminiNativeClient {
      */
     public Flux<StreamEvent> streamEvents(GeminiCall call) {
         ObjectNode body = buildRequestBody(call);
+        String diagnosticsToken = LlmCallDiagnostics.currentToken();
+        String diagnosticsSource = "gemini-native/" + call.model();
+        LlmCallDiagnostics.recordRequestCurrent(diagnosticsSource, body.toString());
         String url = endpoint(call, "streamGenerateContent") + "&alt=sse";
         log.info("[Gemini] stream: model={}, messages={}, tools={}", call.model(),
                 call.messages().size(), call.tools() != null ? call.tools().size() : 0);
@@ -86,12 +90,19 @@ public class GeminiNativeClient {
                         response -> response.bodyToMono(String.class)
                                 .defaultIfEmpty("")
                                 .map(errorBody -> {
+                                    LlmCallDiagnostics.recordErrorResponse(
+                                            diagnosticsToken, diagnosticsSource, errorBody);
                                     log.error("[Gemini] API error {}: {}", response.statusCode(), errorBody);
                                     return new MateClawException("err.llm.gemini_error",
                                             "Gemini API " + response.statusCode() + ": "
                                                     + extractErrorMessage(errorBody));
                                 }))
                 .bodyToFlux(String.class)
+                .doOnNext(raw -> {
+                    if (LlmCallDiagnostics.shouldCaptureResponse(diagnosticsToken)) {
+                        LlmCallDiagnostics.recordResponseChunk(diagnosticsToken, diagnosticsSource, raw);
+                    }
+                })
                 .filter(line -> line.startsWith("data:"))
                 .map(line -> line.startsWith("data: ") ? line.substring(6) : line.substring(5))
                 .filter(line -> !line.isBlank())

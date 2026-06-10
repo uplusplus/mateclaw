@@ -1824,6 +1824,8 @@ watch(isGenerating, (generating) => {
   color: var(--mc-text-primary);
   font-size: 13px;
   opacity: 0.85;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .error-card__action {

@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import vip.mate.exception.MateClawException;
+import vip.mate.llm.chatmodel.LlmCallDiagnostics;
 import vip.mate.llm.oauth.OpenAIOAuthService;
 
 import java.util.*;
@@ -71,6 +72,9 @@ public class ChatGPTResponsesClient {
         String accountId = oauthService.getAccountId();
         ObjectNode requestBody = buildRequestBody(model, messages, temperature, tools);
         String bodyJson = requestBody.toString();
+        String diagnosticsToken = LlmCallDiagnostics.currentToken();
+        String diagnosticsSource = "chatgpt-responses/" + model;
+        LlmCallDiagnostics.recordRequestCurrent(diagnosticsSource, bodyJson);
         log.info("[ChatGPT] Request: model={}, messages={}, tools={}", model, messages.size(),
                 tools != null ? tools.size() : 0);
         log.debug("[ChatGPT] Request body: {}", bodyJson.length() > 2000
@@ -86,11 +90,18 @@ public class ChatGPTResponsesClient {
                 .onStatus(status -> status.is4xxClientError() || status.is5xxServerError(),
                         response -> response.bodyToMono(String.class)
                                 .map(errorBody -> {
+                                    LlmCallDiagnostics.recordErrorResponse(
+                                            diagnosticsToken, diagnosticsSource, errorBody);
                                     log.error("[ChatGPT] API error {}: {}", response.statusCode(), errorBody);
                                     return new MateClawException("ChatGPT API " + response.statusCode() + ": " + errorBody);
                                 }))
                 .bodyToFlux(String.class)
-                .doOnNext(raw -> log.debug("[ChatGPT] SSE raw: {}", raw.length() > 200 ? raw.substring(0, 200) + "..." : raw))
+                .doOnNext(raw -> {
+                    log.debug("[ChatGPT] SSE raw: {}", raw.length() > 200 ? raw.substring(0, 200) + "..." : raw);
+                    if (LlmCallDiagnostics.shouldCaptureResponse(diagnosticsToken)) {
+                        LlmCallDiagnostics.recordResponseChunk(diagnosticsToken, diagnosticsSource, raw);
+                    }
+                })
                 .filter(line -> !line.isBlank() && !line.equals("[DONE]"))
                 .filter(line -> line.startsWith("data:"))
                 .map(line -> {

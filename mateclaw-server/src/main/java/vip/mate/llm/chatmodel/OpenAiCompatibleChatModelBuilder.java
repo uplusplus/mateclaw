@@ -293,6 +293,8 @@ public class OpenAiCompatibleChatModelBuilder implements ChatModelBuilder {
                 try {
                     return super.chatCompletionEntity(chatRequest, additionalHttpHeader);
                 } catch (WebClientResponseException e) {
+                    LlmCallDiagnostics.recordErrorResponse(
+                            LlmCallDiagnostics.currentToken(), diagnosticsSource(provider), e.getResponseBodyAsString());
                     logOpenAiError(provider, e);
                     throw e;
                 }
@@ -310,10 +312,15 @@ public class OpenAiCompatibleChatModelBuilder implements ChatModelBuilder {
                 if (kimiSearchEnabled) {
                     chatRequest = OpenAiRequestRewriter.injectKimiWebSearch(chatRequest);
                 }
+                String diagnosticsToken = LlmCallDiagnostics.currentToken();
+                String diagnosticsSource = diagnosticsSource(provider);
                 logOpenAiRequest(provider, chatRequest);
                 return super.chatCompletionStream(chatRequest, additionalHttpHeader)
+                        .doOnNext(chunk -> captureOpenAiChunk(diagnosticsToken, diagnosticsSource, chunk))
                         .doOnError(error -> {
                             if (error instanceof WebClientResponseException e) {
+                                LlmCallDiagnostics.recordErrorResponse(
+                                        diagnosticsToken, diagnosticsSource, e.getResponseBodyAsString());
                                 logOpenAiError(provider, e);
                             }
                         });
@@ -455,10 +462,16 @@ public class OpenAiCompatibleChatModelBuilder implements ChatModelBuilder {
 
     // ==================== logging ====================
 
+    private String diagnosticsSource(ModelProviderEntity provider) {
+        return "openai-compatible/" + (provider != null ? provider.getProviderId() : "unknown");
+    }
+
     private void logOpenAiRequest(ModelProviderEntity provider, OpenAiApi.ChatCompletionRequest chatRequest) {
         try {
+            String body = objectMapper.writeValueAsString(chatRequest);
+            LlmCallDiagnostics.recordRequestCurrent(diagnosticsSource(provider), body);
             log.info("OpenAI-compatible request: provider={}, body={}",
-                    provider.getProviderId(), objectMapper.writeValueAsString(chatRequest));
+                    provider.getProviderId(), body);
         } catch (Exception e) {
             log.warn("Failed to serialize OpenAI-compatible request for {}: {}",
                     provider.getProviderId(), e.getMessage());
@@ -468,5 +481,19 @@ public class OpenAiCompatibleChatModelBuilder implements ChatModelBuilder {
     private void logOpenAiError(ModelProviderEntity provider, WebClientResponseException e) {
         log.error("OpenAI-compatible error: provider={}, status={}, body={}",
                 provider.getProviderId(), e.getStatusCode(), e.getResponseBodyAsString());
+    }
+
+    private void captureOpenAiChunk(String diagnosticsToken, String diagnosticsSource,
+                                    OpenAiApi.ChatCompletionChunk chunk) {
+        if (!LlmCallDiagnostics.shouldCaptureResponse(diagnosticsToken)) {
+            return;
+        }
+        try {
+            LlmCallDiagnostics.recordResponseChunk(
+                    diagnosticsToken, diagnosticsSource, objectMapper.writeValueAsString(chunk));
+        } catch (Exception e) {
+            log.debug("Failed to serialize OpenAI-compatible response chunk for diagnostics: {}",
+                    e.getMessage());
+        }
     }
 }

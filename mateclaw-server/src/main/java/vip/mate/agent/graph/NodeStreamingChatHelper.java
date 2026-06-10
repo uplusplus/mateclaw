@@ -11,11 +11,13 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 import vip.mate.channel.web.ChatStreamTracker;
 import vip.mate.llm.chatmodel.AssistantThinkingRelay;
+import vip.mate.llm.chatmodel.LlmCallDiagnostics;
 import vip.mate.llm.chatmodel.ReasoningContentCache;
 
 import reactor.core.Disposable;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CancellationException;
@@ -778,9 +780,14 @@ public class NodeStreamingChatHelper {
             }
         }
 
+        String diagnosticsToken = LlmCallDiagnostics.begin();
+        LlmCallDiagnostics.recordRequest(diagnosticsToken, "spring-ai/prompt_preview",
+                buildPromptPreview(outbound));
         try {
-            return doStreamCallInner(chatModel, outbound, conversationId, phase, broadcast, attempt);
+            return doStreamCallInner(chatModel, outbound, conversationId, phase,
+                    broadcast, attempt, diagnosticsToken);
         } finally {
+            LlmCallDiagnostics.clear(diagnosticsToken);
             // Idempotent: if consumer already took the entry, discard is a no-op.
             if (relayToken != null) {
                 AssistantThinkingRelay.discard(relayToken);
@@ -811,7 +818,8 @@ public class NodeStreamingChatHelper {
 
     private StreamResult doStreamCallInner(ChatModel chatModel, Prompt prompt,
                                             String conversationId, String phase,
-                                            boolean broadcast, int attempt) {
+                                            boolean broadcast, int attempt,
+                                            String diagnosticsToken) {
         if (attempt > 0) {
             long delay = Math.min(BACKOFF_BASE_MS * (1L << (attempt - 1)), BACKOFF_CAP_MS);
             // 加入 jitter 防止雷群效应
@@ -848,6 +856,7 @@ public class NodeStreamingChatHelper {
         List<ToolCallAccumulator> toolCallAccumulators = new ArrayList<>();
         AtomicReference<AssistantMessage> lastAssistantMessage = new AtomicReference<>();
         AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        AtomicInteger observedChunkCount = new AtomicInteger(0);
         AtomicInteger promptTokens = new AtomicInteger(0);
         AtomicInteger completionTokens = new AtomicInteger(0);
         // RFC-014: Anthropic prompt cache 计数（其它 provider 永远为 0）
@@ -904,6 +913,7 @@ public class NodeStreamingChatHelper {
 
         Disposable subscription = chatModel.stream(prompt)
                 .doOnNext(chatResponse -> {
+                    observedChunkCount.incrementAndGet();
                     if (chatResponse == null || chatResponse.getResults() == null || chatResponse.getResults().isEmpty()) {
                         return;
                     }
@@ -1199,7 +1209,10 @@ public class NodeStreamingChatHelper {
                 && thinkingAccum.length() == 0
                 && toolCallAccumulators.isEmpty()) {
             log.warn("[{}] LLM returned empty response (no content, no thinking, no tool calls) — marking as EMPTY_RESPONSE for fallback", phase);
-            return buildErrorResultWithType("LLM 返回空响应", conversationId, phase, ErrorType.EMPTY_RESPONSE);
+            return buildEmptyResponseErrorResult(chatModel, prompt, conversationId, phase,
+                    diagnosticsToken, observedChunkCount.get(), lastAssistantMessage.get(),
+                    promptTokens.get(), completionTokens.get(),
+                    cacheReadTokens.get(), cacheWriteTokens.get());
         }
 
         String truncationReason = truncatedByThinkingCap ? "thinking_only_no_content"
@@ -1450,10 +1463,18 @@ public class NodeStreamingChatHelper {
     /** 构建带错误类型的 StreamResult */
     private StreamResult buildErrorResultWithType(String errorMsg, String conversationId,
                                                     String phase, ErrorType errorType) {
+        return buildErrorResultWithType(errorMsg, errorMsg, conversationId, phase, errorType);
+    }
+
+    /** 构建带错误类型的 StreamResult，并允许 warning 文案与 error payload 解耦 */
+    private StreamResult buildErrorResultWithType(String errorMsg, String warningMsg, String conversationId,
+                                                    String phase, ErrorType errorType) {
         log.error("[{}] Building typed error result for conversation {}: {} (type={})",
                 phase, conversationId, errorMsg, errorType);
         if (streamTracker != null && conversationId != null) {
-            broadcastDelta(conversationId, "warning", buildDeltaJson(errorMsg));
+            if (warningMsg != null && !warningMsg.isBlank()) {
+                broadcastDelta(conversationId, "warning", buildDeltaJson(warningMsg));
+            }
             // 广播结构化 error 事件，供前端展示错误卡片
             String errorJson = buildErrorEventJson(errorMsg, conversationId, errorType);
             streamTracker.broadcast(conversationId, "error", errorJson);
@@ -1461,6 +1482,156 @@ public class NodeStreamingChatHelper {
         AssistantMessage errorMessage = new AssistantMessage("[错误] " + errorMsg);
         return new StreamResult("[错误] " + errorMsg, "", errorMessage,
                 List.of(), false, 0, 0, false, errorMsg, errorType);
+    }
+
+    private StreamResult buildEmptyResponseErrorResult(ChatModel chatModel, Prompt prompt,
+                                                       String conversationId, String phase,
+                                                       String diagnosticsToken,
+                                                       int observedChunkCount,
+                                                       AssistantMessage lastAssistantMessage,
+                                                       int promptTokens, int completionTokens,
+                                                       int cacheReadTokens, int cacheWriteTokens) {
+        String errorMsg = buildEmptyResponseErrorMessage(chatModel, prompt, conversationId, phase,
+                diagnosticsToken, observedChunkCount, lastAssistantMessage,
+                promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens);
+        return buildErrorResultWithType(errorMsg, "LLM 返回空响应",
+                conversationId, phase, ErrorType.EMPTY_RESPONSE);
+    }
+
+    private String buildEmptyResponseErrorMessage(ChatModel chatModel, Prompt prompt,
+                                                  String conversationId, String phase,
+                                                  String diagnosticsToken,
+                                                  int observedChunkCount,
+                                                  AssistantMessage lastAssistantMessage,
+                                                  int promptTokens, int completionTokens,
+                                                  int cacheReadTokens, int cacheWriteTokens) {
+        LlmCallDiagnostics.Snapshot snapshot = LlmCallDiagnostics.snapshot(diagnosticsToken);
+        String requestSource = snapshot.requestSource();
+        String responseSource = snapshot.responseSource();
+        String requestPreview = snapshot.requestPreview();
+        String responsePreview = snapshot.responsePreview();
+        if (requestPreview == null || requestPreview.isBlank()) {
+            requestSource = "spring-ai/prompt_preview";
+            requestPreview = buildPromptPreview(prompt);
+        }
+        if (responsePreview == null || responsePreview.isBlank()) {
+            responsePreview = buildParsedAssistantPreview(lastAssistantMessage);
+        }
+
+        StringBuilder sb = new StringBuilder("LLM 返回空响应");
+        sb.append("\n\n[原始请求数据]");
+        if (requestSource != null && !requestSource.isBlank()) {
+            sb.append("\nsource=").append(requestSource);
+        }
+        sb.append('\n').append(requestPreview);
+
+        sb.append("\n\n[原始返回数据]");
+        if (responseSource != null && !responseSource.isBlank()) {
+            sb.append("\nsource=").append(responseSource);
+        }
+        sb.append('\n').append(responsePreview);
+
+        sb.append("\n\n[观测摘要]\n");
+        sb.append("phase=").append(phase != null ? phase : "")
+                .append(", conversationId=").append(conversationId != null ? conversationId : "")
+                .append(", model=").append(identifyModel(chatModel))
+                .append(", observedChunks=").append(observedChunkCount)
+                .append(", rawResponseChunks=").append(snapshot.responseChunks())
+                .append(", promptTokens=").append(promptTokens)
+                .append(", completionTokens=").append(completionTokens)
+                .append(", cacheReadTokens=").append(cacheReadTokens)
+                .append(", cacheWriteTokens=").append(cacheWriteTokens);
+        if (lastAssistantMessage != null) {
+            String lastText = lastAssistantMessage.getText();
+            sb.append(", parsedAssistantTextChars=").append(lastText != null ? lastText.length() : 0)
+                    .append(", parsedAssistantToolCalls=")
+                    .append(lastAssistantMessage.hasToolCalls()
+                            ? lastAssistantMessage.getToolCalls().size() : 0);
+        } else {
+            sb.append(", parsedAssistant=none");
+        }
+        return sb.toString();
+    }
+
+    private String buildPromptPreview(Prompt prompt) {
+        try {
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("messageCount", prompt.getInstructions() != null ? prompt.getInstructions().size() : 0);
+            summary.put("optionsType", prompt.getOptions() != null
+                    ? prompt.getOptions().getClass().getSimpleName() : null);
+            List<Map<String, Object>> messages = new ArrayList<>();
+            if (prompt.getInstructions() != null) {
+                for (Message message : prompt.getInstructions()) {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("type", String.valueOf(message.getMessageType()));
+                    if (message instanceof UserMessage userMessage
+                            && userMessage.getMedia() != null
+                            && !userMessage.getMedia().isEmpty()) {
+                        item.put("mediaCount", userMessage.getMedia().size());
+                    }
+                    String text = message.getText();
+                    if (text != null && !text.isBlank()) {
+                        item.put("text", truncateForDiagnostics(text, 1_200));
+                    }
+                    if (message instanceof AssistantMessage assistantMessage
+                            && assistantMessage.hasToolCalls()) {
+                        List<Map<String, String>> toolCalls = new ArrayList<>();
+                        for (AssistantMessage.ToolCall toolCall : assistantMessage.getToolCalls()) {
+                            Map<String, String> toolSummary = new LinkedHashMap<>();
+                            toolSummary.put("id", toolCall.id());
+                            toolSummary.put("name", toolCall.name());
+                            toolSummary.put("arguments",
+                                    sanitizeToolCallArguments(toolCall.name(), toolCall.arguments()));
+                            toolCalls.add(toolSummary);
+                        }
+                        item.put("toolCalls", toolCalls);
+                    }
+                    messages.add(item);
+                }
+            }
+            summary.put("messages", messages);
+            return TOOL_ARG_JSON_MAPPER.writeValueAsString(summary);
+        } catch (Exception e) {
+            return "Prompt 预览构建失败: " + e.getMessage();
+        }
+    }
+
+    private String buildParsedAssistantPreview(AssistantMessage lastAssistantMessage) {
+        if (lastAssistantMessage == null) {
+            return "(no provider raw response captured; no parsed assistant chunk observed)";
+        }
+        try {
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("source", "parsed_assistant_message_fallback");
+            String text = lastAssistantMessage.getText();
+            summary.put("text", text == null ? "" : truncateForDiagnostics(text, 800));
+            summary.put("toolCallCount",
+                    lastAssistantMessage.hasToolCalls() ? lastAssistantMessage.getToolCalls().size() : 0);
+            Map<String, Object> metadata = lastAssistantMessage.getMetadata();
+            if (metadata != null && !metadata.isEmpty()) {
+                summary.put("metadataKeys", metadata.keySet());
+            }
+            return TOOL_ARG_JSON_MAPPER.writeValueAsString(summary);
+        } catch (Exception e) {
+            return "(no provider raw response captured; parsed assistant preview failed: " + e.getMessage() + ")";
+        }
+    }
+
+    private static String truncateForDiagnostics(String text, int maxChars) {
+        if (text == null || text.length() <= maxChars) {
+            return text;
+        }
+        int head = Math.max(96, maxChars * 2 / 3);
+        head = Math.min(head, text.length());
+        int tail = Math.max(48, maxChars - head - 32);
+        tail = Math.min(tail, text.length() - head);
+        int omitted = text.length() - head - tail;
+        if (omitted <= 0) {
+            return text.substring(0, maxChars);
+        }
+        return text.substring(0, head)
+                + "\n...[truncated " + omitted + " chars]...\n"
+                + text.substring(text.length() - tail);
     }
 
     /** 构建 error 事件的 JSON payload */
