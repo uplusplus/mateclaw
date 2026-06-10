@@ -203,6 +203,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     detail?: any
     since: number
   } | null>(null)
+  const lastEstimatedPromptTokens = ref<number | null>(null)
 
   /** Helper: tag a freshly-created segment with the active iteration / scope. */
   function applyIterationTags(seg: MessageSegment) {
@@ -220,7 +221,19 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   function resetCurrentTurnState() {
     currentSegments.value = []
     segIdCounter.value = 0
+    lastEstimatedPromptTokens.value = null
     activeTurnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+  }
+
+  function applyLastEstimatedPromptTokens(messageId: string | number | null | undefined) {
+    const estimated = lastEstimatedPromptTokens.value
+    if (typeof estimated !== 'number' || estimated <= 0 || !messageId) return
+    const msgIndex = messages.value.findIndex(m => m.id === messageId)
+    if (msgIndex < 0) return
+    const msg = messages.value[msgIndex]
+    if (typeof msg.lastPromptTokens === 'number' && msg.lastPromptTokens > 0) return
+    msg.lastPromptTokens = estimated
+    messages.value[msgIndex] = { ...msg }
   }
 
   /** Sync current segments into the assistant message metadata (used for real-time rendering) */
@@ -458,10 +471,13 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     }
 
     // Only create a placeholder here if one does not already exist (the normal path creates it in sendMessage)
+    const pendingEstimatedPromptTokens = lastEstimatedPromptTokens.value
     resetCurrentTurnState()
+    lastEstimatedPromptTokens.value = pendingEstimatedPromptTokens
     const assistantMessage = createAssistantMessage('', streamConversationId)
     ;(assistantMessage as any)._turnId = activeTurnId
     currentAssistantId.value = assistantMessage.id as string
+    applyLastEstimatedPromptTokens(currentAssistantId.value)
 
     // Auto-followup attribution: if the goal evaluator just decided to
     // inject a followup, the message that just opened belongs to that
@@ -647,6 +663,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
       phaseInfo.value = null
       compactStatus.value = null
       lifecycleStage.value = null
+      lastEstimatedPromptTokens.value = null
       expirePendingApprovals(data.status === 'stopped' ? 'stopped' : 'completed')
     }
 
@@ -714,8 +731,10 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     if (currentAssistantId.value) {
       const msg = getMessage(currentAssistantId.value)
       if (msg) {
+        applyLastEstimatedPromptTokens(currentAssistantId.value)
+        const withUsage = getMessage(currentAssistantId.value) || msg
         updateMessage(currentAssistantId.value, {
-          ...msg,
+          ...withUsage,
           status: 'failed',
           errorInfo,
         } as any)
@@ -730,6 +749,7 @@ export function useChat(options: UseChatOptions): UseChatReturn {
     phaseInfo.value = null
     compactStatus.value = null
     lifecycleStage.value = null
+    lastEstimatedPromptTokens.value = null
     // Clear queue on error to avoid stale state
     messageQueue.clear()
     expirePendingApprovals('failed')
@@ -1222,9 +1242,10 @@ export function useChat(options: UseChatOptions): UseChatReturn {
   stream.on('context_prepared', (data) => {
     if (isStaleEvent(data)) return
     lifecycleStage.value = { stage: 'context_prepared', detail: data, since: Date.now() }
-    if (!currentAssistantId.value) return
     const estimated = data.estimatedPromptTokens
     if (typeof estimated !== 'number' || estimated <= 0) return
+    lastEstimatedPromptTokens.value = estimated
+    if (!currentAssistantId.value) return
     const msgIndex = messages.value.findIndex(m => m.id === currentAssistantId.value)
     if (msgIndex < 0) return
     const msg = messages.value[msgIndex]

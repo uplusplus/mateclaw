@@ -122,6 +122,10 @@ export default {
     retry: 'Retry',
     errorCode: 'Error code',
     debugErrorDetails: 'Raw debug error',
+    debugLlmErrorResponse: 'Raw LLM error response',
+    debugWindowUsage: 'This call used {used} / {total} window tokens ({percent}%)',
+    debugWindowUsageNoTotal: 'This call used {used} window tokens; current model window is not configured',
+    debugWindowUsageUnknown: 'This call window usage has not arrived',
     error: {
       rate_limit: {
         title: 'Too many requests',

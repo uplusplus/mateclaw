@@ -70,6 +70,7 @@
             :is-last="index === messages.length - 1"
             :assistant-icon="assistantIcon"
             :user-icon="userIcon"
+            :model-window-max-input-tokens="modelWindowMaxInputTokens"
             :show-cursor="showCursorForMessage(msg)"
             @regenerate="$emit('regenerate', msg)"
             @toggle-thinking="(expanded) => $emit('toggle-thinking', msg, expanded)"
@@ -111,6 +112,8 @@ interface Props {
   assistantIcon?: string
   /** 用户图标 */
   userIcon?: string
+  /** 当前模型输入窗口上限，用于调试模式下展示单次 LLM 调用窗口占用 */
+  modelWindowMaxInputTokens?: number | null
   /** 标题（空状态） */
   title?: string
   /** 副标题（空状态） */
@@ -129,6 +132,7 @@ const props = withDefaults(defineProps<Props>(), {
   loading: false,
   assistantIcon: '🤖',
   userIcon: 'U',
+  modelWindowMaxInputTokens: null,
   title: 'MateClaw',
   subtitle: '',
   suggestions: () => [],

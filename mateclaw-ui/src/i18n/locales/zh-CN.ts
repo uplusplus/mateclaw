@@ -122,6 +122,10 @@ export default {
     retry: '重试',
     errorCode: '错误码',
     debugErrorDetails: '调试原始异常',
+    debugLlmErrorResponse: 'LLM 原始异常返回',
+    debugWindowUsage: '本次调用窗口占用 {used} / {total}（{percent}%）',
+    debugWindowUsageNoTotal: '本次调用窗口占用 {used}，当前模型未配置窗口上限',
+    debugWindowUsageUnknown: '本次调用窗口占用尚未收到',
     error: {
       rate_limit: {
         title: '请求过于频繁',

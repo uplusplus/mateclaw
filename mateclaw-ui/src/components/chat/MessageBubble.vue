@@ -211,15 +211,23 @@
           </div>
         </div>
 
+        </template><!-- /传统合并渲染模式 -->
+
         <div v-if="debugErrorDetails" class="debug-error-card">
           <div class="debug-error-card__header">
             <el-icon class="debug-error-card__icon"><InfoFilled /></el-icon>
-            <span class="debug-error-card__title">{{ $t('chat.debugErrorDetails') }}</span>
+            <span class="debug-error-card__title">{{ $t('chat.debugLlmErrorResponse') }}</span>
           </div>
-          <pre class="debug-error-card__body">{{ debugErrorDetails }}</pre>
+          <div v-if="debugWindowUsageText" class="debug-window-usage">
+            <div class="debug-window-usage__meta">
+              <span>{{ debugWindowUsageText }}</span>
+            </div>
+            <div v-if="debugWindowUsagePercent != null" class="debug-window-usage__track">
+              <div class="debug-window-usage__bar" :style="debugWindowUsageBarStyle"></div>
+            </div>
+          </div>
+          <pre class="debug-error-card__body">{{ debugLlmErrorResponse }}</pre>
         </div>
-
-        </template><!-- /传统合并渲染模式 -->
 
         <!--
           INCOMPLETE banner: graph emitted finishReason=incomplete after
@@ -472,6 +480,7 @@ interface Props {
   assistantIcon?: string
   userIcon?: string
   showCursor?: boolean
+  modelWindowMaxInputTokens?: number | null
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -479,6 +488,7 @@ const props = withDefaults(defineProps<Props>(), {
   assistantIcon: '🤖',
   userIcon: 'U',
   showCursor: false,
+  modelWindowMaxInputTokens: null,
 })
 
 const emit = defineEmits<{
@@ -542,6 +552,64 @@ const errorRetryable = computed(() => errorInfo.value?.retryable ?? true)
 const debugErrorDetails = computed(() => {
   const details = errorInfo.value?.debugDetails?.trim()
   return details || ''
+})
+
+function formatCompactTokens(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(count >= 10_000_000 ? 0 : 1)}M`
+  if (count >= 1_000) return `${(count / 1_000).toFixed(count >= 10_000 ? 0 : 1)}k`
+  return String(count)
+}
+
+function extractDebugSection(raw: string, sectionNames: string[]): string {
+  if (!raw) return ''
+  for (const name of sectionNames) {
+    const marker = `[${name}]`
+    const start = raw.indexOf(marker)
+    if (start < 0) continue
+    const bodyStart = start + marker.length
+    const rest = raw.slice(bodyStart)
+    const next = rest.search(/\n\n\[[^\]]+\]/)
+    return (next >= 0 ? rest.slice(0, next) : rest).trim()
+  }
+  return ''
+}
+
+const debugLlmErrorResponse = computed(() => {
+  const raw = debugErrorDetails.value
+  return extractDebugSection(raw, ['原始返回数据', 'Raw response data', 'Raw response']) || raw
+})
+
+const debugWindowUsedTokens = computed(() => {
+  const value = props.message.lastPromptTokens
+  return typeof value === 'number' && value > 0 ? value : null
+})
+
+const debugWindowUsagePercent = computed(() => {
+  const used = debugWindowUsedTokens.value
+  const total = props.modelWindowMaxInputTokens
+  if (!used || !total || total <= 0) return null
+  return Math.max(0, Math.round((used / total) * 100))
+})
+
+const debugWindowUsageText = computed(() => {
+  if (!debugErrorDetails.value) return ''
+  const used = debugWindowUsedTokens.value
+  if (!used) return t('chat.debugWindowUsageUnknown')
+  const total = props.modelWindowMaxInputTokens
+  if (!total || total <= 0) {
+    return t('chat.debugWindowUsageNoTotal', { used: formatCompactTokens(used) })
+  }
+  return t('chat.debugWindowUsage', {
+    used: formatCompactTokens(used),
+    total: formatCompactTokens(total),
+    percent: debugWindowUsagePercent.value,
+  })
+})
+
+const debugWindowUsageBarStyle = computed(() => {
+  const percent = debugWindowUsagePercent.value
+  const width = percent == null ? 0 : Math.min(100, percent)
+  return { width: `${width}%` }
 })
 
 // --- Thinking 面板 ---
@@ -1889,6 +1957,38 @@ watch(isGenerating, (generating) => {
   font-size: 13px;
   font-weight: 600;
   color: var(--mc-info, #2563eb);
+}
+
+.debug-window-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--mc-info, #2563eb) 6%, var(--mc-bg, #ffffff));
+  border: 1px solid color-mix(in srgb, var(--mc-info, #2563eb) 18%, transparent);
+}
+
+.debug-window-usage__meta {
+  display: flex;
+  align-items: center;
+  color: var(--mc-text-secondary, #64748b);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.debug-window-usage__track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--mc-border, #cbd5e1) 70%, transparent);
+}
+
+.debug-window-usage__bar {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--mc-info, #2563eb);
 }
 
 .debug-error-card__body {

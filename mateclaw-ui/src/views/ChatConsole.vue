@@ -112,6 +112,7 @@
         :loading="isGenerating"
         :assistant-icon="currentAgent?.icon || '🤖'"
         :user-icon="userInitial"
+        :model-window-max-input-tokens="activeModelMaxInputTokens"
         :title="blockingPrompt ? modelPromptText.title : $t('app.title')"
         :subtitle="blockingPrompt ? modelPromptText.desc : $t('chat.subtitle')"
         :suggestions="blockingPrompt ? [] : suggestions"
