@@ -90,67 +90,113 @@
             v-for="model in [...(provider.models || []), ...(provider.extraModels || [])]"
             :key="model.id"
             class="model-list-item"
+            :class="{ 'model-list-item--active': selectedModelConfigId === model.configId }"
+            @click="$emit('selectModel', model)"
           >
-            <div>
-              <div class="model-list-name">{{ model.name }}</div>
-              <div class="model-list-id">{{ model.id }}</div>
-              <div class="model-list-meta">{{ inputWindowSummary(model) }}</div>
-              <div v-if="model.configId" class="model-window-editor">
-                <label class="form-label form-label--compact">{{ t('settings.model.fields.maxInputTokens') }}</label>
-                <div class="model-window-controls">
-                  <input
-                    :value="getModelInputWindowDraft(model)"
-                    type="number"
-                    min="1"
-                    step="1"
-                    class="form-input model-window-input"
-                    :placeholder="t('settings.model.inputWindowPlaceholder')"
-                    @input="onWindowInput(model, $event)"
-                  />
-                  <button
-                    class="card-btn"
-                    :disabled="savingInputWindowModelId === model.configId"
-                    @click="$emit('saveInputWindow', model)"
-                  >
-                    {{ savingInputWindowModelId === model.configId ? t('settings.model.savingInputWindow') : t('settings.model.saveInputWindow') }}
-                  </button>
+            <div class="model-list-row">
+              <div>
+                <div class="model-list-name">{{ model.name }}</div>
+                <div class="model-list-id">{{ model.id }}</div>
+                <div class="model-list-meta">{{ inputWindowSummary(model) }}</div>
+                <div v-if="modelTestResults[model.id]" class="model-test-result" :class="modelTestResults[model.id].success ? 'success' : 'error'">
+                  <span v-if="modelTestResults[model.id].success">
+                    {{ t('settings.model.discovery.modelOk') }} · {{ t('settings.model.discovery.latency', { ms: modelTestResults[model.id].latencyMs }) }}
+                  </span>
+                  <span v-else>
+                    {{ modelTestResults[model.id].errorMessage }}
+                  </span>
                 </div>
-                <div class="model-window-hint">{{ t('settings.model.inputWindowHint') }}</div>
               </div>
-              <div v-if="modelTestResults[model.id]" class="model-test-result" :class="modelTestResults[model.id].success ? 'success' : 'error'">
-                <span v-if="modelTestResults[model.id].success">
-                  {{ t('settings.model.discovery.modelOk') }} · {{ t('settings.model.discovery.latency', { ms: modelTestResults[model.id].latencyMs }) }}
+              <div class="model-list-actions" @click.stop>
+                <span class="provider-badge" :class="isExtraModel(model.id) ? 'custom' : 'builtin'">
+                  {{ isExtraModel(model.id) ? t('settings.model.custom') : t('settings.model.builtin') }}
                 </span>
-                <span v-else>
-                  {{ modelTestResults[model.id].errorMessage }}
-                </span>
+                <button
+                  class="card-btn test-btn"
+                  :disabled="testingModelId === model.id"
+                  @click="$emit('testModel', model)"
+                >
+                  {{ testingModelId === model.id ? t('settings.model.discovery.testingModel') : t('settings.model.discovery.testModel') }}
+                </button>
+                <button
+                  class="card-btn"
+                  :disabled="isActiveModel(model)"
+                  @click="$emit('setActive', model)"
+                >
+                  {{ isActiveModel(model) ? t('settings.model.active') : t('settings.model.setActive') }}
+                </button>
+                <button
+                  v-if="isExtraModel(model.id)"
+                  class="card-btn danger"
+                  @click="$emit('removeModel', model)"
+                >
+                  {{ t('common.delete') }}
+                </button>
               </div>
             </div>
-            <div class="model-list-actions">
-              <span class="provider-badge" :class="isExtraModel(model.id) ? 'custom' : 'builtin'">
-                {{ isExtraModel(model.id) ? t('settings.model.custom') : t('settings.model.builtin') }}
-              </span>
-              <button
-                class="card-btn test-btn"
-                :disabled="testingModelId === model.id"
-                @click="$emit('testModel', model)"
-              >
-                {{ testingModelId === model.id ? t('settings.model.discovery.testingModel') : t('settings.model.discovery.testModel') }}
-              </button>
-              <button
-                class="card-btn"
-                :disabled="isActiveModel(model)"
-                @click="$emit('setActive', model)"
-              >
-                {{ isActiveModel(model) ? t('settings.model.active') : t('settings.model.setActive') }}
-              </button>
-              <button
-                v-if="isExtraModel(model.id)"
-                class="card-btn danger"
-                @click="$emit('removeModel', model)"
-              >
-                {{ t('common.delete') }}
-              </button>
+
+            <div
+              v-if="selectedModelConfigId === model.configId"
+              class="model-params-panel"
+              @click.stop
+            >
+              <div class="model-params-title">{{ t('settings.model.modelParamsTitle') }}</div>
+              <div v-if="selectedModelConfigLoading" class="model-params-loading">
+                {{ t('settings.model.modelParamsLoading') }}
+              </div>
+              <template v-else>
+                <div class="form-grid">
+                  <div class="form-group">
+                    <label class="form-label">{{ t('settings.fields.name') }}</label>
+                    <input v-model="modelConfigDraft.name" class="form-input" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">{{ t('settings.fields.temperature') }}</label>
+                    <input v-model="modelConfigDraft.temperature" type="number" min="0" step="0.1" class="form-input" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">{{ t('settings.fields.maxTokens') }}</label>
+                    <input v-model="modelConfigDraft.maxTokens" type="number" min="1" step="1" class="form-input" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">{{ t('settings.model.fields.maxInputTokens') }}</label>
+                    <input v-model="modelConfigDraft.maxInputTokens" type="number" min="1" step="1" class="form-input" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">{{ t('settings.fields.topP') }}</label>
+                    <input v-model="modelConfigDraft.topP" type="number" min="0" max="1" step="0.01" class="form-input" />
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">{{ t('settings.fields.requestTimeoutSeconds') }}</label>
+                    <input v-model="modelConfigDraft.requestTimeoutSeconds" type="number" min="1" step="1" class="form-input" />
+                  </div>
+                  <div class="form-group form-group--full">
+                    <label class="form-label">{{ t('settings.fields.description') }}</label>
+                    <textarea v-model="modelConfigDraft.description" class="form-input form-textarea" rows="2" />
+                  </div>
+                  <label class="form-check">
+                    <input v-model="modelConfigDraft.enableSearch" type="checkbox" />
+                    <span>{{ t('settings.model.fields.enableSearch') }}</span>
+                  </label>
+                  <div class="form-group">
+                    <label class="form-label">{{ t('settings.model.fields.searchStrategy') }}</label>
+                    <input
+                      v-model="modelConfigDraft.searchStrategy"
+                      class="form-input"
+                      :placeholder="t('settings.model.searchStrategyDefault')"
+                    />
+                  </div>
+                </div>
+                <div class="model-params-actions">
+                  <button
+                    class="btn-primary"
+                    :disabled="selectedModelConfigSaving"
+                    @click="$emit('saveModelParams')"
+                  >
+                    {{ selectedModelConfigSaving ? t('settings.model.savingModelParams') : t('settings.model.saveModelParams') }}
+                  </button>
+                </div>
+              </template>
             </div>
           </div>
         </div>
@@ -193,12 +239,25 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { DiscoverResult, ProviderInfo, ProviderModelInfo, TestResult } from '@/types'
 
+interface ModelConfigDraft {
+  name: string
+  description: string
+  temperature: string
+  maxTokens: string
+  maxInputTokens: string
+  topP: string
+  requestTimeoutSeconds: string
+  enableSearch: boolean
+  searchStrategy: string
+}
+
 const { t } = useI18n()
 
 const props = defineProps<{
   show: boolean
   provider: ProviderInfo | null
   modelForm: { id: string; name: string; maxInputTokens: string }
+  defaultMaxInputTokens?: number | null
   discovering: boolean
   discoverResult: DiscoverResult | null
   selectedNewModelIds: string[]
@@ -207,6 +266,10 @@ const props = defineProps<{
   testingModelId: string | null
   modelTestResults: Record<string, TestResult>
   savingInputWindowModelId: string | number | null
+  selectedModelConfigId: string | number | null
+  selectedModelConfigLoading: boolean
+  selectedModelConfigSaving: boolean
+  modelConfigDraft: ModelConfigDraft
   isExtraModel: (modelId: string) => boolean
   isActiveModel: (model: ProviderModelInfo) => boolean
   getModelInputWindowDraft: (model: ProviderModelInfo) => string
@@ -226,11 +289,12 @@ function inputWindowSummary(model: ProviderModelInfo) {
   if (model.maxInputTokens && model.maxInputTokens > 0) {
     return t('settings.model.inputWindowConfigured', { count: model.maxInputTokens.toLocaleString() })
   }
-  return t('settings.model.inputWindowGlobalDefault')
-}
-
-function onWindowInput(model: ProviderModelInfo, event: Event) {
-  props.updateModelInputWindowDraft(model, (event.target as HTMLInputElement).value)
+  if (props.defaultMaxInputTokens && props.defaultMaxInputTokens > 0) {
+    return t('settings.model.inputWindowGlobalDefault', {
+      count: props.defaultMaxInputTokens.toLocaleString(),
+    })
+  }
+  return `${t('settings.model.fields.maxInputTokens')}: ${t('settings.model.notSet')}`
 }
 
 defineEmits<{
@@ -244,6 +308,8 @@ defineEmits<{
   removeModel: [model: ProviderModelInfo]
   addModel: []
   saveInputWindow: [model: ProviderModelInfo]
+  selectModel: [model: ProviderModelInfo]
+  saveModelParams: []
 }>()
 </script>
 
@@ -329,7 +395,10 @@ defineEmits<{
 .discover-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
 
 .model-list { display: grid; gap: 12px; }
-.model-list-item { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid var(--mc-border); border-radius: 12px; }
+.model-list-item { display: grid; gap: 12px; padding: 12px 14px; border: 1px solid var(--mc-border); border-radius: 12px; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.model-list-item:hover,
+.model-list-item--active { border-color: var(--mc-primary); background: var(--mc-primary-bg); }
+.model-list-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 .model-list-name { font-weight: 600; color: var(--mc-text-primary); }
 .model-list-id { font-size: 12px; color: var(--mc-text-secondary); }
 .model-list-meta { margin-top: 4px; font-size: 12px; color: var(--mc-text-tertiary); }
@@ -339,12 +408,19 @@ defineEmits<{
 .model-window-hint,
 .model-add-hint { font-size: 12px; color: var(--mc-text-tertiary); }
 .model-list-actions { display: flex; align-items: center; gap: 8px; }
+.model-params-panel { padding-top: 12px; border-top: 1px solid var(--mc-border-light); cursor: default; }
+.model-params-title { margin-bottom: 10px; font-size: 13px; font-weight: 600; color: var(--mc-text-primary); }
+.model-params-loading { padding: 12px 0; font-size: 13px; color: var(--mc-text-tertiary); }
+.model-params-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 .model-add-box { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--mc-border-light); }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+.form-group--full { grid-column: 1 / -1; }
 .form-label { display: block; font-size: 13px; color: var(--mc-text-secondary); margin-bottom: 6px; }
 .form-label--compact { margin-bottom: 0; }
 .form-input { width: 100%; border: 1px solid var(--mc-border); border-radius: 10px; padding: 10px 12px; font-size: 14px; background: var(--mc-bg-sunken); color: var(--mc-text-primary); }
 .form-input:focus { outline: none; border-color: var(--mc-primary); box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.1); }
+.form-textarea { resize: vertical; min-height: 70px; }
+.form-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--mc-text-secondary); align-self: end; cursor: pointer; }
 
 .provider-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 3px 9px; font-size: 12px; font-weight: 600; }
 .provider-badge.builtin { background: var(--mc-primary-bg); color: var(--mc-primary); }

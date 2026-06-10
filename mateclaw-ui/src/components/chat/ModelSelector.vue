@@ -6,6 +6,14 @@
       @click="toggle"
     >
       <span class="model-select-trigger__name">{{ activeLabel || $t('chat.configModel') }}</span>
+      <span
+        v-if="usageText"
+        class="model-select-trigger__usage"
+        :class="usageToneClass"
+        :title="usageTitle || undefined"
+      >
+        {{ usageText }}
+      </span>
       <svg class="model-select-trigger__arrow" :class="{ open }" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
     </button>
 
@@ -127,6 +135,9 @@ const props = defineProps<{
   providers: ProviderInfo[]
   activeValue: string
   activeLabel: string
+  usageText?: string
+  usageTitle?: string
+  usageTone?: 'neutral' | 'warn' | 'danger'
   saving?: boolean
   /**
    * v2 R3: when true, render UNCONFIGURED / REMOVED rows too (dimmed, with
@@ -152,6 +163,14 @@ const listRef = ref<HTMLElement>()
 
 // 下拉框定位（基于 trigger 按钮的位置）
 const dropdownStyle = ref<CSSProperties>({})
+
+const usageToneClass = computed(() => {
+  switch (props.usageTone) {
+    case 'warn': return 'model-select-trigger__usage--warn'
+    case 'danger': return 'model-select-trigger__usage--danger'
+    default: return 'model-select-trigger__usage--neutral'
+  }
+})
 
 function updatePosition() {
   const el = triggerRef.value
@@ -316,7 +335,7 @@ watch(open, async (isOpen) => {
   cursor: pointer;
   transition: all 0.15s;
   white-space: nowrap;
-  max-width: 280px;
+  max-width: 360px;
 }
 
 .model-select-trigger:hover {
@@ -329,8 +348,45 @@ watch(open, async (isOpen) => {
 }
 
 .model-select-trigger__name {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.model-select-trigger__usage {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-select-trigger__usage--neutral {
+  background: rgba(123, 88, 67, 0.08);
+  color: var(--mc-text-secondary);
+}
+
+.model-select-trigger__usage--warn {
+  background: rgba(245, 158, 11, 0.14);
+  color: #b45309;
+}
+
+.model-select-trigger__usage--danger {
+  background: rgba(239, 68, 68, 0.14);
+  color: #b91c1c;
+}
+
+.dark .model-select-trigger__usage--warn {
+  color: #fbbf24;
+}
+
+.dark .model-select-trigger__usage--danger {
+  color: #fca5a5;
 }
 
 .model-select-trigger__arrow {

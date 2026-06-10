@@ -9,6 +9,7 @@ public class SystemSettingsDTO {
     private Boolean streamEnabled;
     private Boolean debugMode;
     private Boolean stateGraphEnabled;
+    private Integer defaultMaxInputTokens;
 
     // ===== 搜索服务配置 =====
     private Boolean searchEnabled;

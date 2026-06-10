@@ -144,6 +144,7 @@
       :show="showManageModelsModal"
       :provider="currentProvider"
       :model-form="providerModelForm"
+      :default-max-input-tokens="defaultMaxInputTokens"
       :discovering="discovering"
       :discover-result="discoverResult"
       :selected-new-model-ids="selectedNewModelIds"
@@ -152,6 +153,10 @@
       :testing-model-id="testingModelId"
       :model-test-results="modelTestResults"
       :saving-input-window-model-id="savingInputWindowModelId"
+      :selected-model-config-id="selectedModelConfigId"
+      :selected-model-config-loading="selectedModelConfigLoading"
+      :selected-model-config-saving="selectedModelConfigSaving"
+      :model-config-draft="modelConfigDraft"
       :is-extra-model="isExtraModel"
       :is-active-model="isActiveModel"
       :get-model-input-window-draft="getModelInputWindowDraft"
@@ -168,6 +173,8 @@
       @remove-model="onRemoveProviderModel"
       @add-model="onAddProviderModel"
       @save-input-window="onSaveModelInputWindow"
+      @select-model="selectModelConfig"
+      @save-model-params="onSaveModelParams"
     />
 
     <!-- RFC-074 PR-2: Add Provider Drawer (catalog of opt-in built-ins). -->
@@ -237,7 +244,12 @@ const {
   modelTestResults,
   providerForm,
   providerModelForm,
+  defaultMaxInputTokens,
   savingInputWindowModelId,
+  selectedModelConfigId,
+  selectedModelConfigLoading,
+  selectedModelConfigSaving,
+  modelConfigDraft,
   protocolOptions,
   allNewSelected,
   providerBaseUrlPlaceholder,
@@ -261,6 +273,8 @@ const {
   getModelInputWindowDraft,
   updateModelInputWindowDraft,
   saveModelInputWindow,
+  selectModelConfig,
+  saveSelectedModelConfig,
   isProviderActive,
   isActiveModel,
   setActiveModel,
@@ -403,6 +417,15 @@ async function onSaveModelInputWindow(model: ProviderModelInfo) {
     showSavedTip(t('settings.model.inputWindowSaved'))
   } catch (error) {
     mcToast.error(error instanceof Error ? error.message : t('settings.model.inputWindowSaveFailed'))
+  }
+}
+
+async function onSaveModelParams() {
+  try {
+    await saveSelectedModelConfig()
+    showSavedTip(t('settings.model.modelParamsSaved'))
+  } catch (error) {
+    mcToast.error(error instanceof Error ? error.message : t('settings.model.modelParamsSaveFailed'))
   }
 }
 

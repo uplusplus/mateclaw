@@ -44,6 +44,18 @@
           </label>
         </div>
       </div>
+
+      <div class="setting-item">
+        <div class="setting-info">
+          <div class="setting-label">{{ t('settings.fields.defaultMaxInputTokens') }}</div>
+          <div class="setting-hint">{{ t('settings.hints.defaultMaxInputTokens') }}</div>
+        </div>
+        <div class="setting-control">
+          <div class="setting-static-value">
+            {{ settings.defaultMaxInputTokens ? `${settings.defaultMaxInputTokens.toLocaleString()} tokens` : '--' }}
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 搜索服务配置 -->
@@ -218,6 +230,7 @@ const settings = reactive<SystemSettings>({
   language: 'zh-CN',
   streamEnabled: true,
   debugMode: false,
+  defaultMaxInputTokens: undefined,
   searchEnabled: true,
   searchProvider: 'serper',
   searchFallbackEnabled: false,
@@ -277,6 +290,17 @@ function showSavedTip(message: string) {
 .setting-hint { font-size: 13px; color: var(--mc-text-secondary); }
 .setting-control { width: 220px; display: flex; align-items: center; justify-content: flex-end; }
 .setting-control-full { width: 100%; }
+.setting-static-value {
+  min-width: 140px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--mc-border);
+  background: var(--mc-bg-sunken);
+  color: var(--mc-text-primary);
+  text-align: right;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
 .form-input { width: 100%; border: 1px solid var(--mc-border); border-radius: 10px; padding: 10px 12px; font-size: 14px; background: var(--mc-bg-sunken); color: var(--mc-text-primary); }
 .form-input:focus { outline: none; border-color: var(--mc-primary); box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.1); }
 .form-input:disabled { opacity: 0.5; cursor: not-allowed; }

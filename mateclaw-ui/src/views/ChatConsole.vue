@@ -76,6 +76,9 @@
             :providers="providers"
             :active-value="activeModelValue"
             :active-label="activeModelLabel"
+            :usage-text="modelWindowUsageText"
+            :usage-title="modelWindowUsageTitle"
+            :usage-tone="modelWindowUsageTone"
             :saving="modelSaving"
             :show-all-states="true"
             @select="selectModel"
@@ -811,6 +814,78 @@ const activeModelLabel = computed(() => {
     m.provider === providerId && (m.modelName === modelName || m.name === modelName))
   if (hit) return hit.name ? `${hit.name} (${hit.modelName})` : hit.modelName
   return `${providerId} / ${modelName}`
+})
+
+function formatCompactTokens(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(count >= 10_000_000 ? 0 : 1)}M`
+  if (count >= 1_000) return `${(count / 1_000).toFixed(count >= 10_000 ? 0 : 1)}k`
+  return String(count)
+}
+
+const activeModelMaxInputTokens = computed<number | null>(() => {
+  const providerId = activeModels.value?.activeLlm?.providerId
+  const modelName = activeModels.value?.activeLlm?.model
+  if (!providerId || !modelName) return null
+  const provider = providers.value.find((p) => p.id === providerId)
+  const providerModel = provider
+    ? [...(provider.models || []), ...(provider.extraModels || [])]
+      .find((m) => m.id === modelName || m.name === modelName)
+    : null
+  if (providerModel?.maxInputTokens && providerModel.maxInputTokens > 0) {
+    return providerModel.maxInputTokens
+  }
+  const enabledModel = enabledModels.value.find((m) =>
+    m.provider === providerId && (m.modelName === modelName || m.name === modelName))
+  if (enabledModel?.maxInputTokens && enabledModel.maxInputTokens > 0) {
+    return enabledModel.maxInputTokens
+  }
+  return null
+})
+
+const latestPromptTokensForWindowUsage = computed(() => {
+  const providerId = activeModels.value?.activeLlm?.providerId
+  const modelName = activeModels.value?.activeLlm?.model
+  const lastWithUsage = messages.value.findLast(
+    (message) => {
+      if (message.role !== 'assistant') return false
+      if (typeof message.promptTokens !== 'number' || message.promptTokens <= 0) return false
+      if (!providerId || !modelName) return true
+      return message.runtimeProvider === providerId && message.runtimeModel === modelName
+    },
+  )
+  return lastWithUsage?.promptTokens ?? 0
+})
+
+const modelWindowUsageRatio = computed<number | null>(() => {
+  const total = activeModelMaxInputTokens.value
+  if (!total || total <= 0) return null
+  return latestPromptTokensForWindowUsage.value / total
+})
+
+const modelWindowUsageText = computed(() => {
+  const total = activeModelMaxInputTokens.value
+  if (!total || total <= 0) return ''
+  return `${formatCompactTokens(latestPromptTokensForWindowUsage.value)} / ${formatCompactTokens(total)}`
+})
+
+const modelWindowUsageTitle = computed(() => {
+  const total = activeModelMaxInputTokens.value
+  if (!total || total <= 0) return ''
+  const used = latestPromptTokensForWindowUsage.value
+  const percent = Math.max(0, Math.round((used / total) * 100))
+  return t('chat.modelWindowUsage', {
+    used: used.toLocaleString(),
+    total: total.toLocaleString(),
+    percent,
+  })
+})
+
+const modelWindowUsageTone = computed<'neutral' | 'warn' | 'danger'>(() => {
+  const ratio = modelWindowUsageRatio.value
+  if (ratio == null) return 'neutral'
+  if (ratio >= 0.85) return 'danger'
+  if (ratio >= 0.65) return 'warn'
+  return 'neutral'
 })
 
 const activeProvider = computed(() => {

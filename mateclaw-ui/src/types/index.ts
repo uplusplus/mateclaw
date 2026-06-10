@@ -764,6 +764,7 @@ export interface ModelConfig {
   temperature?: number
   maxTokens?: number
   maxInputTokens?: number | null
+  requestTimeoutSeconds?: number | null
   topP?: number
   enableSearch?: boolean
   searchStrategy?: string
@@ -777,6 +778,7 @@ export interface SystemSettings {
   language: 'zh-CN' | 'en-US'
   streamEnabled: boolean
   debugMode: boolean
+  defaultMaxInputTokens?: number
   // 搜索服务配置
   searchEnabled: boolean
   searchProvider: 'serper' | 'tavily'

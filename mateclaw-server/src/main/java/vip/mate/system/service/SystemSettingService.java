@@ -3,6 +3,7 @@ package vip.mate.system.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import vip.mate.config.ConversationWindowProperties;
 import vip.mate.system.model.SystemSettingEntity;
 import vip.mate.system.model.SystemSettingsDTO;
 import vip.mate.system.repository.SystemSettingMapper;
@@ -77,6 +78,7 @@ public class SystemSettingService {
     private static final String MINIMAX_REGION_KEY = "minimaxRegion";
 
     private final SystemSettingMapper systemSettingMapper;
+    private final ConversationWindowProperties conversationWindowProperties;
 
     /**
      * Resolve the SearXNG base URL: DB value takes priority; fall back to the
@@ -96,6 +98,7 @@ public class SystemSettingService {
         dto.setStreamEnabled(Boolean.parseBoolean(getValue(STREAM_ENABLED_KEY, "true")));
         dto.setDebugMode(Boolean.parseBoolean(getValue(DEBUG_MODE_KEY, "false")));
         dto.setStateGraphEnabled(Boolean.parseBoolean(getValue(STATEGRAPH_ENABLED_KEY, "false")));
+        dto.setDefaultMaxInputTokens(conversationWindowProperties.getDefaultMaxInputTokens());
 
         // 搜索服务配置
         dto.setSearchEnabled(Boolean.parseBoolean(getValue(SEARCH_ENABLED_KEY, "true")));

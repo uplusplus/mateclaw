@@ -1,8 +1,20 @@
 import { computed, reactive, ref, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { mcToast } from '@/composables/useMcToast'
-import { modelApi } from '@/api'
-import type { DiscoverResult, ProviderInfo, ProviderModelInfo, TestResult } from '@/types'
+import { modelApi, settingsApi } from '@/api'
+import type { DiscoverResult, ModelConfig, ProviderInfo, ProviderModelInfo, TestResult } from '@/types'
+
+export interface ModelConfigDraft {
+  name: string
+  description: string
+  temperature: string
+  maxTokens: string
+  maxInputTokens: string
+  topP: string
+  requestTimeoutSeconds: string
+  enableSearch: boolean
+  searchStrategy: string
+}
 
 interface ListDeps {
   currentProvider: Ref<ProviderInfo | null>
@@ -19,6 +31,7 @@ export function useProviderDiscovery(deps: ListDeps) {
   const { t } = useI18n()
 
   const showManageModelsModal = ref(false)
+  const defaultMaxInputTokens = ref<number | null>(null)
   const providerModelForm = reactive({
     id: '',
     name: '',
@@ -26,6 +39,21 @@ export function useProviderDiscovery(deps: ListDeps) {
   })
   const modelInputWindowDrafts = reactive<Record<string, string>>({})
   const savingInputWindowModelId = ref<string | number | null>(null)
+  const selectedModelConfigId = ref<string | number | null>(null)
+  const selectedModelConfigLoading = ref(false)
+  const selectedModelConfigSaving = ref(false)
+  const selectedModelConfigDetail = ref<ModelConfig | null>(null)
+  const modelConfigDraft = reactive<ModelConfigDraft>({
+    name: '',
+    description: '',
+    temperature: '',
+    maxTokens: '',
+    maxInputTokens: '',
+    topP: '',
+    requestTimeoutSeconds: '',
+    enableSearch: false,
+    searchStrategy: '',
+  })
 
   const discovering = ref(false)
   const discoverResult = ref<DiscoverResult | null>(null)
@@ -41,15 +69,31 @@ export function useProviderDiscovery(deps: ListDeps) {
     return String(model.configId ?? model.id)
   }
 
+  async function loadDefaultMaxInputTokens() {
+    try {
+      const res: any = await settingsApi.get()
+      const value = Number(res?.data?.defaultMaxInputTokens)
+      defaultMaxInputTokens.value = Number.isInteger(value) && value > 0 ? value : null
+    } catch {
+      defaultMaxInputTokens.value = null
+    }
+  }
+
+  function prefilledMaxInputTokens(raw?: number | null) {
+    if (raw && raw > 0) return String(raw)
+    if (defaultMaxInputTokens.value && defaultMaxInputTokens.value > 0) {
+      return String(defaultMaxInputTokens.value)
+    }
+    return ''
+  }
+
   function syncModelInputWindowDrafts(provider: ProviderInfo | null = deps.currentProvider.value) {
     const nextKeys = new Set<string>()
     const models = [...(provider?.models || []), ...(provider?.extraModels || [])]
     for (const model of models) {
       const key = modelDraftKey(model)
       nextKeys.add(key)
-      modelInputWindowDrafts[key] = model.maxInputTokens && model.maxInputTokens > 0
-        ? String(model.maxInputTokens)
-        : ''
+      modelInputWindowDrafts[key] = prefilledMaxInputTokens(model.maxInputTokens)
     }
     for (const key of Object.keys(modelInputWindowDrafts)) {
       if (!nextKeys.has(key)) delete modelInputWindowDrafts[key]
@@ -58,10 +102,62 @@ export function useProviderDiscovery(deps: ListDeps) {
 
   function normalizeMaxInputTokens(raw: string) {
     const text = raw.trim()
-    if (!text) return null
+    if (!text) {
+      throw new Error(t('settings.model.inputWindowInvalid'))
+    }
     const value = Number(text)
     if (!Number.isInteger(value) || value <= 0) {
       throw new Error(t('settings.model.inputWindowInvalid'))
+    }
+    return value
+  }
+
+  function formatOptionalNumber(value?: number | null) {
+    return value == null ? '' : String(value)
+  }
+
+  function resetModelConfigDraft() {
+    selectedModelConfigId.value = null
+    selectedModelConfigDetail.value = null
+    modelConfigDraft.name = ''
+    modelConfigDraft.description = ''
+    modelConfigDraft.temperature = ''
+    modelConfigDraft.maxTokens = ''
+    modelConfigDraft.maxInputTokens = ''
+    modelConfigDraft.topP = ''
+    modelConfigDraft.requestTimeoutSeconds = ''
+    modelConfigDraft.enableSearch = false
+    modelConfigDraft.searchStrategy = ''
+  }
+
+  function fillModelConfigDraft(detail: ModelConfig) {
+    modelConfigDraft.name = detail.name || ''
+    modelConfigDraft.description = detail.description || ''
+    modelConfigDraft.temperature = formatOptionalNumber(detail.temperature)
+    modelConfigDraft.maxTokens = formatOptionalNumber(detail.maxTokens)
+    modelConfigDraft.maxInputTokens = formatOptionalNumber(detail.maxInputTokens)
+    modelConfigDraft.topP = formatOptionalNumber(detail.topP)
+    modelConfigDraft.requestTimeoutSeconds = formatOptionalNumber(detail.requestTimeoutSeconds)
+    modelConfigDraft.enableSearch = detail.enableSearch === true
+    modelConfigDraft.searchStrategy = detail.searchStrategy || ''
+  }
+
+  function normalizeOptionalNumber(raw: string, label: string) {
+    const text = raw.trim()
+    if (!text) return null
+    const value = Number(text)
+    if (!Number.isFinite(value)) {
+      throw new Error(t('settings.model.modelParamsNumberInvalid', { field: label }))
+    }
+    return value
+  }
+
+  function normalizeOptionalInteger(raw: string, label: string) {
+    const text = raw.trim()
+    if (!text) return null
+    const value = Number(text)
+    if (!Number.isInteger(value) || value <= 0) {
+      throw new Error(t('settings.model.modelParamsIntegerInvalid', { field: label }))
     }
     return value
   }
@@ -71,11 +167,14 @@ export function useProviderDiscovery(deps: ListDeps) {
     return selectedNewModelIds.value.length === discoverResult.value.newModels.length
   })
 
-  function openManageModelsModal(provider: ProviderInfo) {
+  async function openManageModelsModal(provider: ProviderInfo) {
+    if (defaultMaxInputTokens.value == null) {
+      await loadDefaultMaxInputTokens()
+    }
     deps.currentProvider.value = provider
     providerModelForm.id = ''
     providerModelForm.name = ''
-    providerModelForm.maxInputTokens = ''
+    providerModelForm.maxInputTokens = prefilledMaxInputTokens(null)
     syncModelInputWindowDrafts(provider)
     showManageModelsModal.value = true
   }
@@ -88,6 +187,9 @@ export function useProviderDiscovery(deps: ListDeps) {
     modelTestResults.value = {}
     testingModelId.value = null
     savingInputWindowModelId.value = null
+    selectedModelConfigLoading.value = false
+    selectedModelConfigSaving.value = false
+    resetModelConfigDraft()
     providerModelForm.maxInputTokens = ''
     for (const key of Object.keys(modelInputWindowDrafts)) delete modelInputWindowDrafts[key]
   }
@@ -108,7 +210,7 @@ export function useProviderDiscovery(deps: ListDeps) {
     syncModelInputWindowDrafts()
     providerModelForm.id = ''
     providerModelForm.name = ''
-    providerModelForm.maxInputTokens = ''
+    providerModelForm.maxInputTokens = prefilledMaxInputTokens(null)
   }
 
   async function removeProviderModel(model: ProviderModelInfo) {
@@ -122,9 +224,7 @@ export function useProviderDiscovery(deps: ListDeps) {
   function getModelInputWindowDraft(model: ProviderModelInfo) {
     const key = modelDraftKey(model)
     if (!(key in modelInputWindowDrafts)) {
-      modelInputWindowDrafts[key] = model.maxInputTokens && model.maxInputTokens > 0
-        ? String(model.maxInputTokens)
-        : ''
+      modelInputWindowDrafts[key] = prefilledMaxInputTokens(model.maxInputTokens)
     }
     return modelInputWindowDrafts[key]
   }
@@ -150,6 +250,66 @@ export function useProviderDiscovery(deps: ListDeps) {
       syncModelInputWindowDrafts()
     } finally {
       savingInputWindowModelId.value = null
+    }
+  }
+
+  async function selectModelConfig(model: ProviderModelInfo) {
+    if (!model.configId) {
+      mcToast.warning(t('settings.model.modelParamsUnsupported'))
+      return
+    }
+    const configId = model.configId
+    selectedModelConfigId.value = configId
+    selectedModelConfigLoading.value = true
+    try {
+      const detail: any = await modelApi.get(configId)
+      if (selectedModelConfigId.value !== configId) return
+      selectedModelConfigDetail.value = detail.data
+      fillModelConfigDraft(detail.data)
+    } catch (error) {
+      if (selectedModelConfigId.value !== configId) return
+      resetModelConfigDraft()
+      mcToast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      if (selectedModelConfigId.value === configId) {
+        selectedModelConfigLoading.value = false
+      }
+    }
+  }
+
+  async function saveSelectedModelConfig() {
+    const configId = selectedModelConfigId.value
+    if (!deps.currentProvider.value || !configId) return
+    const name = modelConfigDraft.name.trim()
+    if (!name) {
+      throw new Error(t('settings.model.modelParamsNameRequired'))
+    }
+    selectedModelConfigSaving.value = true
+    try {
+      const detail: any = await modelApi.get(configId)
+      const payload = {
+        ...detail.data,
+        name,
+        description: modelConfigDraft.description.trim(),
+        temperature: normalizeOptionalNumber(modelConfigDraft.temperature, t('settings.fields.temperature')),
+        maxTokens: normalizeOptionalInteger(modelConfigDraft.maxTokens, t('settings.fields.maxTokens')),
+        maxInputTokens: normalizeOptionalInteger(modelConfigDraft.maxInputTokens, t('settings.model.fields.maxInputTokens')),
+        topP: normalizeOptionalNumber(modelConfigDraft.topP, t('settings.fields.topP')),
+        requestTimeoutSeconds: normalizeOptionalInteger(
+          modelConfigDraft.requestTimeoutSeconds,
+          t('settings.fields.requestTimeoutSeconds'),
+        ),
+        enableSearch: modelConfigDraft.enableSearch,
+        searchStrategy: modelConfigDraft.searchStrategy.trim(),
+      }
+      await modelApi.update(configId, payload)
+      const saved: any = await modelApi.get(configId)
+      selectedModelConfigDetail.value = saved.data
+      fillModelConfigDraft(saved.data)
+      await deps.refreshCurrentProvider(deps.currentProvider.value.id)
+      syncModelInputWindowDrafts()
+    } finally {
+      selectedModelConfigSaving.value = false
     }
   }
 
@@ -234,10 +394,17 @@ export function useProviderDiscovery(deps: ListDeps) {
     }
   }
 
+  void loadDefaultMaxInputTokens()
+
   return {
     showManageModelsModal,
+    defaultMaxInputTokens,
     providerModelForm,
     savingInputWindowModelId,
+    selectedModelConfigId,
+    selectedModelConfigLoading,
+    selectedModelConfigSaving,
+    modelConfigDraft,
     discovering,
     discoverResult,
     selectedNewModelIds,
@@ -255,6 +422,8 @@ export function useProviderDiscovery(deps: ListDeps) {
     getModelInputWindowDraft,
     updateModelInputWindowDraft,
     saveModelInputWindow,
+    selectModelConfig,
+    saveSelectedModelConfig,
     toggleSelectAll,
     handleDiscoverModels,
     handleApplyModels,
