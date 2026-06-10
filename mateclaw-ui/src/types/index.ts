@@ -763,6 +763,7 @@ export interface ModelConfig {
   description?: string
   temperature?: number
   maxTokens?: number
+  maxInputTokens?: number | null
   topP?: number
   enableSearch?: boolean
   searchStrategy?: string
@@ -805,8 +806,10 @@ export interface SystemSettings {
 }
 
 export interface ProviderModelInfo {
+  configId?: string | number
   id: string
   name: string
+  maxInputTokens?: number | null
   /** Discovery probe result (backend `probeOk` field). True = verified reachable, false = probe failed, undefined = not probed */
   probeOk?: boolean
   /** Short error message when probeOk=false */

@@ -151,8 +151,11 @@
       :all-new-selected="allNewSelected"
       :testing-model-id="testingModelId"
       :model-test-results="modelTestResults"
+      :saving-input-window-model-id="savingInputWindowModelId"
       :is-extra-model="isExtraModel"
       :is-active-model="isActiveModel"
+      :get-model-input-window-draft="getModelInputWindowDraft"
+      :update-model-input-window-draft="updateModelInputWindowDraft"
       :get-provider-icon="getProviderIcon"
       :on-icon-error="onIconError"
       @close="closeManageModelsModal"
@@ -164,6 +167,7 @@
       @set-active="onSetActiveModel"
       @remove-model="onRemoveProviderModel"
       @add-model="onAddProviderModel"
+      @save-input-window="onSaveModelInputWindow"
     />
 
     <!-- RFC-074 PR-2: Add Provider Drawer (catalog of opt-in built-ins). -->
@@ -233,6 +237,7 @@ const {
   modelTestResults,
   providerForm,
   providerModelForm,
+  savingInputWindowModelId,
   protocolOptions,
   allNewSelected,
   providerBaseUrlPlaceholder,
@@ -253,6 +258,9 @@ const {
   isExtraModel,
   addProviderModel,
   removeProviderModel,
+  getModelInputWindowDraft,
+  updateModelInputWindowDraft,
+  saveModelInputWindow,
   isProviderActive,
   isActiveModel,
   setActiveModel,
@@ -386,6 +394,15 @@ async function onSetActiveModel(model: ProviderModelInfo) {
     showSavedTip(t('settings.model.activeChanged'))
   } catch (error) {
     mcToast.error(error instanceof Error ? error.message : t('settings.model.activeChangeFailed'))
+  }
+}
+
+async function onSaveModelInputWindow(model: ProviderModelInfo) {
+  try {
+    await saveModelInputWindow(model)
+    showSavedTip(t('settings.model.inputWindowSaved'))
+  } catch (error) {
+    mcToast.error(error instanceof Error ? error.message : t('settings.model.inputWindowSaveFailed'))
   }
 }
 

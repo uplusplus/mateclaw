@@ -22,7 +22,10 @@ export function useProviderDiscovery(deps: ListDeps) {
   const providerModelForm = reactive({
     id: '',
     name: '',
+    maxInputTokens: '',
   })
+  const modelInputWindowDrafts = reactive<Record<string, string>>({})
+  const savingInputWindowModelId = ref<string | number | null>(null)
 
   const discovering = ref(false)
   const discoverResult = ref<DiscoverResult | null>(null)
@@ -34,6 +37,35 @@ export function useProviderDiscovery(deps: ListDeps) {
   const testingModelId = ref<string | null>(null)
   const modelTestResults = ref<Record<string, TestResult>>({})
 
+  function modelDraftKey(model: ProviderModelInfo) {
+    return String(model.configId ?? model.id)
+  }
+
+  function syncModelInputWindowDrafts(provider: ProviderInfo | null = deps.currentProvider.value) {
+    const nextKeys = new Set<string>()
+    const models = [...(provider?.models || []), ...(provider?.extraModels || [])]
+    for (const model of models) {
+      const key = modelDraftKey(model)
+      nextKeys.add(key)
+      modelInputWindowDrafts[key] = model.maxInputTokens && model.maxInputTokens > 0
+        ? String(model.maxInputTokens)
+        : ''
+    }
+    for (const key of Object.keys(modelInputWindowDrafts)) {
+      if (!nextKeys.has(key)) delete modelInputWindowDrafts[key]
+    }
+  }
+
+  function normalizeMaxInputTokens(raw: string) {
+    const text = raw.trim()
+    if (!text) return null
+    const value = Number(text)
+    if (!Number.isInteger(value) || value <= 0) {
+      throw new Error(t('settings.model.inputWindowInvalid'))
+    }
+    return value
+  }
+
   const allNewSelected = computed(() => {
     if (!discoverResult.value || discoverResult.value.newCount === 0) return false
     return selectedNewModelIds.value.length === discoverResult.value.newModels.length
@@ -43,6 +75,8 @@ export function useProviderDiscovery(deps: ListDeps) {
     deps.currentProvider.value = provider
     providerModelForm.id = ''
     providerModelForm.name = ''
+    providerModelForm.maxInputTokens = ''
+    syncModelInputWindowDrafts(provider)
     showManageModelsModal.value = true
   }
 
@@ -53,6 +87,9 @@ export function useProviderDiscovery(deps: ListDeps) {
     selectedNewModelIds.value = []
     modelTestResults.value = {}
     testingModelId.value = null
+    savingInputWindowModelId.value = null
+    providerModelForm.maxInputTokens = ''
+    for (const key of Object.keys(modelInputWindowDrafts)) delete modelInputWindowDrafts[key]
   }
 
   function isExtraModel(modelId: string) {
@@ -61,13 +98,17 @@ export function useProviderDiscovery(deps: ListDeps) {
 
   async function addProviderModel() {
     if (!deps.currentProvider.value || !providerModelForm.id) return
+    const maxInputTokens = normalizeMaxInputTokens(providerModelForm.maxInputTokens)
     await modelApi.addProviderModel(deps.currentProvider.value.id, {
       id: providerModelForm.id,
       name: providerModelForm.name || providerModelForm.id,
+      maxInputTokens,
     })
     await deps.refreshCurrentProvider(deps.currentProvider.value.id)
+    syncModelInputWindowDrafts()
     providerModelForm.id = ''
     providerModelForm.name = ''
+    providerModelForm.maxInputTokens = ''
   }
 
   async function removeProviderModel(model: ProviderModelInfo) {
@@ -75,6 +116,41 @@ export function useProviderDiscovery(deps: ListDeps) {
     if (!confirm(t('settings.model.removeConfirm', { name: model.name }))) return
     await modelApi.removeProviderModel(deps.currentProvider.value.id, model.id)
     await deps.refreshCurrentProvider(deps.currentProvider.value.id)
+    syncModelInputWindowDrafts()
+  }
+
+  function getModelInputWindowDraft(model: ProviderModelInfo) {
+    const key = modelDraftKey(model)
+    if (!(key in modelInputWindowDrafts)) {
+      modelInputWindowDrafts[key] = model.maxInputTokens && model.maxInputTokens > 0
+        ? String(model.maxInputTokens)
+        : ''
+    }
+    return modelInputWindowDrafts[key]
+  }
+
+  function updateModelInputWindowDraft(model: ProviderModelInfo, value: string) {
+    modelInputWindowDrafts[modelDraftKey(model)] = value.replace(/[^\d]/g, '')
+  }
+
+  async function saveModelInputWindow(model: ProviderModelInfo) {
+    if (!deps.currentProvider.value || !model.configId) {
+      throw new Error(t('settings.model.inputWindowUnsupported'))
+    }
+    const key = modelDraftKey(model)
+    const maxInputTokens = normalizeMaxInputTokens(modelInputWindowDrafts[key] ?? '')
+    savingInputWindowModelId.value = model.configId
+    try {
+      const detail: any = await modelApi.get(model.configId)
+      await modelApi.update(model.configId, {
+        ...detail.data,
+        maxInputTokens,
+      })
+      await deps.refreshCurrentProvider(deps.currentProvider.value.id)
+      syncModelInputWindowDrafts()
+    } finally {
+      savingInputWindowModelId.value = null
+    }
   }
 
   function toggleSelectAll() {
@@ -161,6 +237,7 @@ export function useProviderDiscovery(deps: ListDeps) {
   return {
     showManageModelsModal,
     providerModelForm,
+    savingInputWindowModelId,
     discovering,
     discoverResult,
     selectedNewModelIds,
@@ -175,6 +252,9 @@ export function useProviderDiscovery(deps: ListDeps) {
     isExtraModel,
     addProviderModel,
     removeProviderModel,
+    getModelInputWindowDraft,
+    updateModelInputWindowDraft,
+    saveModelInputWindow,
     toggleSelectAll,
     handleDiscoverModels,
     handleApplyModels,

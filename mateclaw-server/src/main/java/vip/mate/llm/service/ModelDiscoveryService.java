@@ -414,7 +414,7 @@ public class ModelDiscoveryService {
                 skipped++;
                 continue;
             }
-            modelConfigService.addModelToProvider(providerId, modelId, modelId, false);
+            modelConfigService.addModelToProvider(providerId, modelId, modelId, null, false);
             added++;
         }
         if (skipped > 0) {

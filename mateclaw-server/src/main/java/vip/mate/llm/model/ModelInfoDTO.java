@@ -1,15 +1,16 @@
 package vip.mate.llm.model;
 
-import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 @Data
 @NoArgsConstructor
-@AllArgsConstructor
 public class ModelInfoDTO {
+    private Long configId;
     private String id;
     private String name;
+    /** Null/<=0 means "use the global default input window". */
+    private Integer maxInputTokens;
 
     /**
      * Discovery probe result. true = passed runtime-protocol ping test,
@@ -46,6 +47,12 @@ public class ModelInfoDTO {
         this.name = name;
         this.supportsReasoningEffort = ModelFamily.detect(id).supportsReasoningEffort();
         this.supportsThinking = computeSupportsThinking(id);
+    }
+
+    public ModelInfoDTO(Long configId, String id, String name, Integer maxInputTokens) {
+        this(id, name);
+        this.configId = configId;
+        this.maxInputTokens = maxInputTokens;
     }
 
     /**

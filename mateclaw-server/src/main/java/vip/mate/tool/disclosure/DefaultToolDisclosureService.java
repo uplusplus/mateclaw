@@ -56,13 +56,6 @@ public class DefaultToolDisclosureService implements ToolDisclosureService {
 
     @Value("${mateclaw.tools.disclosure.mode:progressive}")
     private String disclosureMode;
-    /**
-     * Auto-demote noisy MCP servers whose tool count exceeds this threshold
-     * when the admin has not explicitly set disclosureTier on the server row.
-     * 0 disables the heuristic.
-     */
-    @Value("${mateclaw.tools.disclosure.mcp-auto-extension-threshold:8}")
-    private int mcpAutoExtensionThreshold;
 
     private volatile Snapshot snapshot;
 
@@ -96,15 +89,7 @@ public class DefaultToolDisclosureService implements ToolDisclosureService {
         }
         Long serverId = snap.mcpToolToServerId.get(toolName);
         if (serverId != null) {
-            DisclosureTier explicitTier = snap.serverTierById.get(serverId);
-            if (explicitTier != null) {
-                return explicitTier;
-            }
-            int toolCount = snap.serverToolCountById.getOrDefault(serverId, 0);
-            if (mcpAutoExtensionThreshold > 0 && toolCount > mcpAutoExtensionThreshold) {
-                return DisclosureTier.EXTENSION;
-            }
-            return DisclosureTier.CORE;
+            return snap.serverTierById.getOrDefault(serverId, DisclosureTier.CORE);
         }
         // Unknown source (ACP / dynamic-skill / plugin) — keep visible.
         return DisclosureTier.CORE;

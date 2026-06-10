@@ -135,13 +135,10 @@ mateclaw:
     disclosure:
       # progressive: extension-tier tools are hidden behind the extension-tools
       #   catalog until the model calls enable_tool. By default that's the heavy
-      #   generative / browser tools. MCP servers with an explicit
-      #   disclosureTier follow that setting; otherwise, very large MCP servers
-      #   auto-demote to extension so they don't dump dozens of schemas into
-      #   every reasoning turn. Small MCP servers stay directly callable.
+      #   generative / browser tools. MCP servers follow their explicit
+      #   disclosureTier when set; otherwise they stay directly callable.
       # legacy: advertise every bound tool up front (pre-disclosure behavior).
       mode: ${MATECLAW_TOOLS_DISCLOSURE_MODE:progressive}
-      mcp-auto-extension-threshold: ${MATECLAW_TOOLS_MCP_AUTO_EXTENSION_THRESHOLD:8}
   skill:
     workspace:
       root: ${user.home}/.mateclaw/skills

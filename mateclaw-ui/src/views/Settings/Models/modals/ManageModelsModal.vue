@@ -94,6 +94,29 @@
             <div>
               <div class="model-list-name">{{ model.name }}</div>
               <div class="model-list-id">{{ model.id }}</div>
+              <div class="model-list-meta">{{ inputWindowSummary(model) }}</div>
+              <div v-if="model.configId" class="model-window-editor">
+                <label class="form-label form-label--compact">{{ t('settings.model.fields.maxInputTokens') }}</label>
+                <div class="model-window-controls">
+                  <input
+                    :value="getModelInputWindowDraft(model)"
+                    type="number"
+                    min="1"
+                    step="1"
+                    class="form-input model-window-input"
+                    :placeholder="t('settings.model.inputWindowPlaceholder')"
+                    @input="onWindowInput(model, $event)"
+                  />
+                  <button
+                    class="card-btn"
+                    :disabled="savingInputWindowModelId === model.configId"
+                    @click="$emit('saveInputWindow', model)"
+                  >
+                    {{ savingInputWindowModelId === model.configId ? t('settings.model.savingInputWindow') : t('settings.model.saveInputWindow') }}
+                  </button>
+                </div>
+                <div class="model-window-hint">{{ t('settings.model.inputWindowHint') }}</div>
+              </div>
               <div v-if="modelTestResults[model.id]" class="model-test-result" :class="modelTestResults[model.id].success ? 'success' : 'error'">
                 <span v-if="modelTestResults[model.id].success">
                   {{ t('settings.model.discovery.modelOk') }} · {{ t('settings.model.discovery.latency', { ms: modelTestResults[model.id].latencyMs }) }}
@@ -143,7 +166,19 @@
               <label class="form-label">{{ t('settings.model.fields.modelDisplayName') }}</label>
               <input v-model="modelForm.name" class="form-input" />
             </div>
+            <div class="form-group">
+              <label class="form-label">{{ t('settings.model.fields.maxInputTokens') }}</label>
+              <input
+                v-model="modelForm.maxInputTokens"
+                type="number"
+                min="1"
+                step="1"
+                class="form-input"
+                :placeholder="t('settings.model.inputWindowPlaceholder')"
+              />
+            </div>
           </div>
+          <div class="model-add-hint">{{ t('settings.model.inputWindowHint') }}</div>
           <div class="modal-footer compact">
             <button class="btn-primary" @click="$emit('addModel')">{{ t('settings.model.addModel') }}</button>
           </div>
@@ -163,7 +198,7 @@ const { t } = useI18n()
 const props = defineProps<{
   show: boolean
   provider: ProviderInfo | null
-  modelForm: { id: string; name: string }
+  modelForm: { id: string; name: string; maxInputTokens: string }
   discovering: boolean
   discoverResult: DiscoverResult | null
   selectedNewModelIds: string[]
@@ -171,8 +206,11 @@ const props = defineProps<{
   allNewSelected: boolean
   testingModelId: string | null
   modelTestResults: Record<string, TestResult>
+  savingInputWindowModelId: string | number | null
   isExtraModel: (modelId: string) => boolean
   isActiveModel: (model: ProviderModelInfo) => boolean
+  getModelInputWindowDraft: (model: ProviderModelInfo) => string
+  updateModelInputWindowDraft: (model: ProviderModelInfo, value: string) => void
   getProviderIcon: (providerId: string) => string
   onIconError: (e: Event) => void
 }>()
@@ -184,6 +222,17 @@ const discoveredUnavailable = computed(() => {
   return all.filter(m => m && m.probeOk === false)
 })
 
+function inputWindowSummary(model: ProviderModelInfo) {
+  if (model.maxInputTokens && model.maxInputTokens > 0) {
+    return t('settings.model.inputWindowConfigured', { count: model.maxInputTokens.toLocaleString() })
+  }
+  return t('settings.model.inputWindowGlobalDefault')
+}
+
+function onWindowInput(model: ProviderModelInfo, event: Event) {
+  props.updateModelInputWindowDraft(model, (event.target as HTMLInputElement).value)
+}
+
 defineEmits<{
   close: []
   discover: []
@@ -194,6 +243,7 @@ defineEmits<{
   setActive: [model: ProviderModelInfo]
   removeModel: [model: ProviderModelInfo]
   addModel: []
+  saveInputWindow: [model: ProviderModelInfo]
 }>()
 </script>
 
@@ -282,10 +332,17 @@ defineEmits<{
 .model-list-item { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid var(--mc-border); border-radius: 12px; }
 .model-list-name { font-weight: 600; color: var(--mc-text-primary); }
 .model-list-id { font-size: 12px; color: var(--mc-text-secondary); }
+.model-list-meta { margin-top: 4px; font-size: 12px; color: var(--mc-text-tertiary); }
+.model-window-editor { margin-top: 10px; display: grid; gap: 6px; }
+.model-window-controls { display: flex; gap: 8px; align-items: center; }
+.model-window-input { max-width: 220px; }
+.model-window-hint,
+.model-add-hint { font-size: 12px; color: var(--mc-text-tertiary); }
 .model-list-actions { display: flex; align-items: center; gap: 8px; }
 .model-add-box { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--mc-border-light); }
-.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
 .form-label { display: block; font-size: 13px; color: var(--mc-text-secondary); margin-bottom: 6px; }
+.form-label--compact { margin-bottom: 0; }
 .form-input { width: 100%; border: 1px solid var(--mc-border); border-radius: 10px; padding: 10px 12px; font-size: 14px; background: var(--mc-bg-sunken); color: var(--mc-text-primary); }
 .form-input:focus { outline: none; border-color: var(--mc-primary); box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.1); }
 

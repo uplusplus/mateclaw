@@ -179,7 +179,8 @@ public class ModelProviderService {
 
         if (request.getModels() != null) {
             for (ModelInfoDTO model : request.getModels()) {
-                modelConfigService.addModelToProvider(request.getId(), model.getId(), model.getName(), false);
+                modelConfigService.addModelToProvider(
+                        request.getId(), model.getId(), model.getName(), model.getMaxInputTokens(), false);
             }
         }
         eventPublisher.publishEvent(new ModelConfigChangedEvent("provider-created"));
@@ -206,7 +207,8 @@ public class ModelProviderService {
         if (modelId != null && !modelId.isBlank()) {
             ModelDiscoveryService.assertModelIdAcceptable(providerId, this.getProvider(providerId), modelId);
         }
-        modelConfigService.addModelToProvider(providerId, modelId, request.getName(), false);
+        modelConfigService.addModelToProvider(
+                providerId, modelId, request.getName(), request.getMaxInputTokens(), false);
         return toProviderInfo(getProvider(providerId), modelConfigService.listModelsByProvider(providerId));
     }
 
@@ -434,7 +436,8 @@ public class ModelProviderService {
             for (ModelConfigEntity model : models) {
                 // RFC-049 PR-1-UI: ModelInfoDTO(id, name) derives supportsReasoningEffort
                 // from id via ModelFamily — no extra wiring needed here.
-                ModelInfoDTO info = new ModelInfoDTO(model.getModelName(), model.getName());
+                ModelInfoDTO info = new ModelInfoDTO(
+                        model.getId(), model.getModelName(), model.getName(), model.getMaxInputTokens());
                 if (Boolean.TRUE.equals(model.getBuiltin())) {
                     builtinModels.add(info);
                 } else {

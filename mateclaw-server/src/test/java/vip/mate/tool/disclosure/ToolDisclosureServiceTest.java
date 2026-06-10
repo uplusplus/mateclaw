@@ -88,10 +88,7 @@ class ToolDisclosureServiceTest {
         lenient().when(ms.listAll()).thenReturn(servers);
         lenient().when(as.listAvailable()).thenReturn(available);
         lenient().when(tr.getEnabledToolSet()).thenReturn(globalSet());
-        DefaultToolDisclosureService svc = new DefaultToolDisclosureService(ts, ms, as, tr);
-        ReflectionTestUtils.setField(svc, "disclosureMode", "progressive");
-        ReflectionTestUtils.setField(svc, "mcpAutoExtensionThreshold", 8);
-        return svc;
+        return new DefaultToolDisclosureService(ts, ms, as, tr);
     }
 
     @Test
@@ -150,22 +147,11 @@ class ToolDisclosureServiceTest {
     }
 
     @Test
-    @DisplayName("MCP tool whose server has no tier set stays core when the server is small")
-    void mcpDefaultsCoreWhenServerTierUnsetAndSmall() {
+    @DisplayName("MCP tool whose server has no tier set defaults to core (visible)")
+    void mcpDefaultsCoreWhenServerTierUnset() {
         var svc = service(List.of(), List.of(server(7L, "github", null)),
                 List.of(mcpDto("mcp_github_create_issue", 7L)));
         assertEquals(DisclosureTier.CORE, svc.resolveTierByName("mcp_github_create_issue"));
-    }
-
-    @Test
-    @DisplayName("MCP tool whose server has no tier set auto-demotes to extension when the server is noisy")
-    void noisyMcpServerDefaultsToExtension() {
-        List<AvailableToolDTO> available = new ArrayList<>();
-        for (int i = 0; i < 9; i++) {
-            available.add(mcpDto("mcp_fs_tool_" + i, 7L));
-        }
-        var svc = service(List.of(), List.of(server(7L, "filesystem", null)), available);
-        assertEquals(DisclosureTier.EXTENSION, svc.resolveTierByName("mcp_fs_tool_0"));
     }
 
     @Test

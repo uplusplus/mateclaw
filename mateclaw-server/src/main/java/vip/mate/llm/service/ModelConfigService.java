@@ -254,7 +254,8 @@ public class ModelConfigService {
         publishConfigChanged("model-deleted");
     }
 
-    public ModelConfigEntity addModelToProvider(String providerId, String modelId, String displayName, boolean builtin) {
+    public ModelConfigEntity addModelToProvider(String providerId, String modelId, String displayName,
+                                                Integer maxInputTokens, boolean builtin) {
         if (!StringUtils.hasText(providerId) || !StringUtils.hasText(modelId)) {
             throw new MateClawException("err.llm.provider_model_required", "Provider 和模型标识不能为空");
         }
@@ -272,6 +273,7 @@ public class ModelConfigService {
         entity.setDescription("");
         entity.setTemperature(0.7);
         entity.setMaxTokens(4096);
+        entity.setMaxInputTokens(maxInputTokens != null && maxInputTokens > 0 ? maxInputTokens : null);
         entity.setTopP(0.8);
         entity.setBuiltin(builtin);
         entity.setEnabled(true);
