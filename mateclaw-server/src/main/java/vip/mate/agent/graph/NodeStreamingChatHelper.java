@@ -1766,8 +1766,11 @@ public class NodeStreamingChatHelper {
         appendJsonEscaped(sb, conversationId);
         sb.append("\",\"errorType\":\"");
         sb.append(errorType.name());
-        if (LlmCallDiagnostics.isNetworkDebugEnabled()
-                && debugDetails != null && !debugDetails.isBlank()) {
+        boolean debugOn = LlmCallDiagnostics.isNetworkDebugEnabled();
+        log.info("[ErrorEventJson] debugMode={}, debugDetailsPresent={}, debugDetailsLen={}",
+                debugOn, debugDetails != null && !debugDetails.isBlank(),
+                debugDetails != null ? debugDetails.length() : 0);
+        if (debugOn && debugDetails != null && !debugDetails.isBlank()) {
             sb.append(",\"debugDetails\":\"");
             appendJsonEscaped(sb, debugDetails);
             sb.append("\"");
