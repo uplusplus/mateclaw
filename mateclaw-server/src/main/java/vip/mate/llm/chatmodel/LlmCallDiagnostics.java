@@ -390,7 +390,7 @@ public final class LlmCallDiagnostics {
             String rawResponse,
             int rawResponseChunks
     ) {
-        private static Snapshot empty() {
+        public static Snapshot empty() {
             return new Snapshot(null, null, null, null, 0, null, null, null, null, 0);
         }
     }
