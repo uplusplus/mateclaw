@@ -457,10 +457,12 @@ public class ChatController {
                                                 conversationId, "stopped", savedAssistant, 0, 0,
                                                 isAssistantPersisted(savedAssistant), stoppedMsgCount));
                                     } else {
-                                        broadcastEvent(conversationId, "error", buildErrorPayload(
-                                                conversationId,
-                                                e.getMessage() != null ? e.getMessage() : "replay error",
-                                                savedAssistant));
+                                        if (!streamTracker.isDebugErrorEventBroadcasted(conversationId)) {
+                                            broadcastEvent(conversationId, "error", buildErrorPayload(
+                                                    conversationId,
+                                                    e.getMessage() != null ? e.getMessage() : "replay error",
+                                                    savedAssistant));
+                                        }
                                     }
                                 } catch (Exception ex) {
                                     log.warn("SSE replay error finalize failed: {}", ex.getMessage());
@@ -867,7 +869,13 @@ public class ChatController {
                                             conversationId, "stopped", savedAssistant, 0, 0,
                                             isAssistantPersisted(savedAssistant), stoppedMsgCount));
                                 } else {
-                                    broadcastEvent(conversationId, "error", buildErrorPayload(conversationId, errorMsg, savedAssistant));
+                                    // 若 NodeStreamingChatHelper 已广播过带 debugDetails 的 error 事件，
+                                    // 此处跳过重复广播，避免覆盖前端已收到的调试详情
+                                    if (!streamTracker.isDebugErrorEventBroadcasted(conversationId)) {
+                                        broadcastEvent(conversationId, "error", buildErrorPayload(conversationId, errorMsg, savedAssistant));
+                                    } else {
+                                        log.info("SSE doOnError: skipping error broadcast (debug error event already sent): conversationId={}", conversationId);
+                                    }
                                 }
                             } catch (Exception ioException) {
                                 log.error("SSE doOnError save/broadcast failed: conversationId={}, error={}",
@@ -1371,10 +1379,12 @@ public class ChatController {
                             savedAssistant = conversationService.saveMessage(conversationId, "assistant",
                                     "[错误] " + errorMsg, null, "failed");
                         }
-                        broadcastEvent(conversationId, "error", buildErrorPayload(
-                                conversationId,
-                                e.getMessage() != null ? e.getMessage() : "queued stream error",
-                                savedAssistant));
+                        if (!streamTracker.isDebugErrorEventBroadcasted(conversationId)) {
+                            broadcastEvent(conversationId, "error", buildErrorPayload(
+                                    conversationId,
+                                    e.getMessage() != null ? e.getMessage() : "queued stream error",
+                                    savedAssistant));
+                        }
                     } catch (Exception saveEx) {
                         log.error("SSE queued doOnError save failed: {}", saveEx.getMessage());
                     }

@@ -526,8 +526,7 @@ public class NodeStreamingChatHelper {
                 sb.append("HTTP ").append(wre.getStatusCode().value());
                 String body = wre.getResponseBodyAsString();
                 if (body != null && !body.isBlank()) {
-                    String trimmed = body.length() > 500 ? body.substring(0, 500) + "..." : body;
-                    sb.append("\n").append(trimmed);
+                    sb.append("\n").append(truncateForDebug(body, 500));
                 }
                 return sb.toString();
             }
@@ -733,7 +732,7 @@ public class NodeStreamingChatHelper {
 
         logPerfSummary(phase, conversationId, callStartMs, llmCallCount, retryCount, failoverCount);
         return lastResult != null ? lastResult
-                : buildErrorResult("LLM 调用失败，已达最大重试次数", conversationId, phase);
+                : buildErrorResult("LLM 调用失败，已达最大重试次数", conversationId, phase, null, chatModel);
     }
 
     /** D-6: log a structured performance summary for the LLM call phase. */
@@ -883,7 +882,7 @@ public class NodeStreamingChatHelper {
                     Thread.sleep(slice);
                 } catch (InterruptedException ie) {
                     Thread.currentThread().interrupt();
-                    return buildErrorResult("LLM 调用被中断", conversationId, phase);
+                    return buildErrorResult("LLM 调用被中断", conversationId, phase, diagnosticsToken, chatModel);
                 }
                 remaining -= slice;
             }
@@ -1152,13 +1151,13 @@ public class NodeStreamingChatHelper {
                 if (System.currentTimeMillis() > deadlineMs) {
                     subscription.dispose();
                     log.warn("[{}] Stream call timed out for conversation {}", phase, conversationId);
-                    return buildErrorResult("LLM 调用超时", conversationId, phase);
+                    return buildErrorResult("LLM 调用超时", conversationId, phase, diagnosticsToken, chatModel);
                 }
             }
         } catch (InterruptedException e) {
             subscription.dispose();
             Thread.currentThread().interrupt();
-            return buildErrorResult("LLM 调用被中断", conversationId, phase);
+            return buildErrorResult("LLM 调用被中断", conversationId, phase, diagnosticsToken, chatModel);
         }
 
         Throwable error = errorRef.get();
@@ -1526,13 +1525,41 @@ public class NodeStreamingChatHelper {
     }
 
     private StreamResult buildErrorResult(String errorMsg, String conversationId, String phase) {
+        return buildErrorResult(errorMsg, conversationId, phase, null, null);
+    }
+
+    /**
+     * 构建错误 StreamResult，在调试模式下附带诊断详情并广播 error 事件。
+     *
+     * @param errorMsg        用户可见的错误消息
+     * @param conversationId  会话 ID
+     * @param phase           阶段标识
+     * @param diagnosticsToken LLM 诊断 token（可为 null）
+     * @param chatModel       LLM 模型（可为 null，用于 identifyModel）
+     */
+    private StreamResult buildErrorResult(String errorMsg, String conversationId, String phase,
+                                           String diagnosticsToken, ChatModel chatModel) {
         log.error("[{}] Building error result for conversation {}: {}", phase, conversationId, errorMsg);
+        String debugDetails = null;
+        if (LlmCallDiagnostics.isNetworkDebugEnabled()) {
+            debugDetails = buildGenericDebugDetails(chatModel, conversationId, phase,
+                    diagnosticsToken, errorMsg);
+        }
         if (streamTracker != null && conversationId != null) {
             broadcastDelta(conversationId, "warning",
                     buildDeltaJson(errorMsg));
+            // 广播结构化 error 事件，包含调试详情
+            String errorJson = buildErrorEventJson(errorMsg, conversationId, ErrorType.UNKNOWN, debugDetails);
+            streamTracker.broadcast(conversationId, "error", errorJson);
+            streamTracker.markDebugErrorEventBroadcasted(conversationId);
         }
-        AssistantMessage errorMessage = new AssistantMessage("[错误] " + errorMsg);
-        return new StreamResult("[错误] " + errorMsg, "", errorMessage,
+        // 调试模式下，将诊断详情附加到会话消息中（持久化后刷新页面仍可见）
+        String displayMsg = errorMsg;
+        if (LlmCallDiagnostics.isNetworkDebugEnabled() && debugDetails != null && !debugDetails.isBlank()) {
+            displayMsg = errorMsg + "\n\n---\n" + debugDetails;
+        }
+        AssistantMessage errorMessage = new AssistantMessage("[错误] " + displayMsg);
+        return new StreamResult("[错误] " + displayMsg, "", errorMessage,
                 List.of(), false, 0, 0, false, errorMsg, ErrorType.UNKNOWN);
     }
 
@@ -1560,6 +1587,7 @@ public class NodeStreamingChatHelper {
             // 广播结构化 error 事件，供前端展示错误卡片
             String errorJson = buildErrorEventJson(errorMsg, conversationId, errorType, debugDetails);
             streamTracker.broadcast(conversationId, "error", errorJson);
+            streamTracker.markDebugErrorEventBroadcasted(conversationId);
         }
         // 调试模式下，将 HTTP 异常号和原始详情附加到会话消息中
         String displayMsg = errorMsg;
@@ -1583,6 +1611,41 @@ public class NodeStreamingChatHelper {
                 promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens);
         return buildErrorResultWithType("LLM 返回空响应", "LLM 返回空响应",
                 conversationId, phase, ErrorType.EMPTY_RESPONSE, debugDetails);
+    }
+
+    /**
+     * 为通用错误（超时、中断、重试耗尽等）构建调试详情。
+     * 这些场景没有完整的 LLM 诊断上下文，但仍可从 LlmCallDiagnostics 快照中
+     * 提取已捕获的原始请求/响应数据。
+     */
+    private String buildGenericDebugDetails(ChatModel chatModel, String conversationId,
+                                             String phase, String diagnosticsToken,
+                                             String errorMsg) {
+        StringBuilder sb = new StringBuilder(errorMsg != null ? errorMsg : "LLM 调用异常");
+        LlmCallDiagnostics.Snapshot snapshot = diagnosticsToken != null
+                ? LlmCallDiagnostics.snapshot(diagnosticsToken) : LlmCallDiagnostics.Snapshot.empty();
+        String requestBody = snapshot.rawRequest();
+        String responseBody = snapshot.rawResponse();
+        if (requestBody != null && !requestBody.isBlank()) {
+            sb.append("\n\n[原始请求数据]");
+            if (snapshot.rawRequestSource() != null && !snapshot.rawRequestSource().isBlank()) {
+                sb.append("\nsource=").append(snapshot.rawRequestSource());
+            }
+            sb.append('\n').append(truncateForDebug(requestBody, 500));
+        }
+        if (responseBody != null && !responseBody.isBlank()) {
+            sb.append("\n\n[原始返回数据]");
+            if (snapshot.rawResponseSource() != null && !snapshot.rawResponseSource().isBlank()) {
+                sb.append("\nsource=").append(snapshot.rawResponseSource());
+            }
+            sb.append('\n').append(truncateForDebug(responseBody, 500));
+        }
+        sb.append("\n\n[观测摘要]\n");
+        sb.append("phase=").append(phase != null ? phase : "")
+                .append(", conversationId=").append(conversationId != null ? conversationId : "")
+                .append(", model=").append(identifyModel(chatModel))
+                .append(", rawResponseChunks=").append(snapshot.rawResponseChunks());
+        return sb.toString();
     }
 
     private String buildLlmDebugDetails(ChatModel chatModel, Prompt prompt,
@@ -1617,6 +1680,19 @@ public class NodeStreamingChatHelper {
         return sb.toString();
     }
 
+    /**
+     * 调试详情中截断大文本，仅保留开头部分，后续内容以字节数表示。
+     * 例如：前 500 字符 + "\n...[剩余 12345 字节]..."
+     */
+    private static String truncateForDebug(String text, int keepChars) {
+        if (text == null || text.length() <= keepChars) {
+            return text;
+        }
+        int remaining = text.length() - keepChars;
+        return text.substring(0, keepChars)
+                + "\n...[剩余 " + remaining + " 字节]...";
+    }
+
     private void appendCapturedNetworkDebug(StringBuilder sb, ChatModel chatModel, Prompt prompt,
                                             String conversationId, String phase,
                                             String diagnosticsToken,
@@ -1641,13 +1717,13 @@ public class NodeStreamingChatHelper {
         if (requestSource != null && !requestSource.isBlank()) {
             sb.append("\nsource=").append(requestSource);
         }
-        sb.append('\n').append(requestBody);
+        sb.append('\n').append(truncateForDebug(requestBody, 500));
 
         sb.append("\n\n[原始返回数据]");
         if (responseSource != null && !responseSource.isBlank()) {
             sb.append("\nsource=").append(responseSource);
         }
-        sb.append('\n').append(responseBody);
+        sb.append('\n').append(truncateForDebug(responseBody, 500));
 
         sb.append("\n\n[观测摘要]\n");
         sb.append("phase=").append(phase != null ? phase : "")

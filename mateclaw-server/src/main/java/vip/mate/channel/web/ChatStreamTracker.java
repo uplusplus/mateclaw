@@ -180,8 +180,15 @@ public class ChatStreamTracker {
         /** 等待原因（审批等待时有值） */
         volatile String waitingReason;
 
-        /** 排队的用户消息队列（支持多条排队消息，按序消费） */
+        /** 排队的用户消息队队列（支持多条排队消息，按序消费） */
         final java.util.Queue<QueuedInput> messageQueue = new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+        /**
+         * 标记是否已广播过带 debugDetails 的 error 事件。
+         * NodeStreamingChatHelper 在调试模式下广播 error 事件时设为 true，
+         * ChatController doOnError 检查此标记避免重复广播覆盖。
+         */
+        volatile boolean debugErrorEventBroadcasted = false;
 
         /**
          * Emergency save callback registered by the SSE chain owner (ChatController).
@@ -1121,6 +1128,22 @@ public class ChatStreamTracker {
         if (state.firstTokenReceived) return;
         state.firstTokenReceived = true;
         rescheduleHeartbeat(conversationId);
+    }
+
+    /**
+     * 标记已广播过带 debugDetails 的 error 事件，ChatController doOnError 应跳过重复广播。
+     */
+    public void markDebugErrorEventBroadcasted(String conversationId) {
+        RunState state = runs.get(conversationId);
+        if (state != null) state.debugErrorEventBroadcasted = true;
+    }
+
+    /**
+     * 检查是否已广播过带 debugDetails 的 error 事件。
+     */
+    public boolean isDebugErrorEventBroadcasted(String conversationId) {
+        RunState state = runs.get(conversationId);
+        return state != null && state.debugErrorEventBroadcasted;
     }
 
     /**

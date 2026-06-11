@@ -74,6 +74,9 @@ const BACKEND_ERROR_TYPE_MAP: Record<string, { category: ChatErrorCategory; retr
   // 让后端 extractUserFriendlyError 返回的具体中文提示能真正显示出来。
   CLIENT_ERROR:         { category: 'bad_request',         retryable: false },
   THINKING_BLOCK_ERROR: { category: 'bad_request',         retryable: true },
+  EMPTY_RESPONSE:       { category: 'service_unavailable', retryable: true },
+  BILLING:              { category: 'provider_auth_error', retryable: false },
+  MODEL_NOT_FOUND:      { category: 'bad_request',         retryable: false },
   UNKNOWN:              { category: 'unknown',             retryable: true },
 }
 
@@ -118,18 +121,29 @@ const ERROR_TEXT_PATTERNS: Array<{ pattern: RegExp; category: ChatErrorCategory;
   { pattern: /过长|too.?long|context.?length|prompt/i,       category: 'bad_request',         retryable: false },
   { pattern: /超时|timeout/i,                                category: 'timeout',             retryable: true },
   { pattern: /不可用|unavailable|503|502|504|过载|overload/i, category: 'service_unavailable', retryable: true },
+  { pattern: /空响应|empty.?response/i,                    category: 'service_unavailable', retryable: true },
   { pattern: /服务器|server.?error|500|internal/i,           category: 'server_error',        retryable: true },
 ]
 
 export function reconstructErrorInfo(text: string): ChatErrorInfo | null {
   if (!text || !text.startsWith('[错误]')) return null
-  const rawMessage = text.replace(/^\[错误]\s*/, '')
+  const raw = text.replace(/^\[错误]\s*/, '')
+
+  // 调试模式下，后端将 debugDetails 附加在 "\n\n---\n" 分隔符之后
+  let rawMessage = raw
+  let debugDetails: string | undefined
+  const separatorIdx = raw.indexOf('\n\n---\n')
+  if (separatorIdx > 0) {
+    rawMessage = raw.substring(0, separatorIdx)
+    debugDetails = raw.substring(separatorIdx + 6) // 6 = '\n\n---\n'.length
+  }
+
   for (const { pattern, category, retryable } of ERROR_TEXT_PATTERNS) {
     if (pattern.test(rawMessage)) {
-      return { category, rawMessage, retryable, timestamp: 0 }
+      return { category, rawMessage, debugDetails, retryable, timestamp: 0 }
     }
   }
-  return { category: 'unknown', rawMessage, retryable: true, timestamp: 0 }
+  return { category: 'unknown', rawMessage, debugDetails, retryable: true, timestamp: 0 }
 }
 
 /**
