@@ -113,3 +113,4 @@ scripts/.*-sync-state.json
 # but should not ship in the repo.
 outputs/
 graphify-out/
+.vscode

@@ -1,22 +1,5 @@
 package vip.mate.agent.graph;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.Message;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
-import vip.mate.agent.context.TokenEstimator;
-import vip.mate.channel.web.ChatStreamTracker;
-import vip.mate.llm.chatmodel.AssistantThinkingRelay;
-import vip.mate.llm.chatmodel.LlmCallDiagnostics;
-import vip.mate.llm.chatmodel.ReasoningContentCache;
-
-import reactor.core.Disposable;
-
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -28,6 +11,23 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import lombok.extern.slf4j.Slf4j;
+import reactor.core.Disposable;
+import vip.mate.agent.context.TokenEstimator;
+import vip.mate.channel.web.ChatStreamTracker;
+import vip.mate.llm.chatmodel.AssistantThinkingRelay;
+import vip.mate.llm.chatmodel.LlmCallDiagnostics;
+import vip.mate.llm.chatmodel.ReasoningContentCache;
 
 /**
  * 节点级流式 LLM 调用辅助
@@ -483,6 +483,7 @@ public class NodeStreamingChatHelper {
                 || msg.contains("network connection error")) {
             return ErrorType.SERVER_ERROR;
         }
+        log.warn("JOY unknown Error:[{}]", msg);
         return ErrorType.UNKNOWN;
     }
 
