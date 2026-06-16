@@ -25,6 +25,9 @@ import vip.mate.agent.context.LoopBudgetConfig;
 import vip.mate.agent.context.LoopMessageBudgeter;
 import vip.mate.agent.context.RuntimeContextInjector;
 import vip.mate.agent.context.TokenEstimator;
+import vip.mate.agent.prompt.budget.PromptBudgetManager;
+import vip.mate.agent.prompt.budget.PromptModule;
+import vip.mate.agent.prompt.budget.PromptSegment;
 import vip.mate.agent.graph.state.FinishReason;
 import vip.mate.agent.graph.state.MateClawStateAccessor;
 import vip.mate.agent.graph.state.MateClawStateKeys;
@@ -239,6 +242,19 @@ public class ReasoningNode implements NodeAction {
      */
     private final vip.mate.agent.progress.ProgressLedgerService progressLedgerService;
 
+    /**
+     * Optional prompt budget manager for modular prompt configuration.
+     * When present, {@link #buildNonHistoryPrefix} uses it to control
+     * which modules are included and how much space each gets.
+     * Wired via setter injection so existing constructors stay unchanged.
+     */
+    private PromptBudgetManager promptBudgetManager;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setPromptBudgetManager(PromptBudgetManager promptBudgetManager) {
+        this.promptBudgetManager = promptBudgetManager;
+    }
+
     public ReasoningNode(ChatModel chatModel, AgentToolSet toolSet, String reasoningEffort,
                          NodeStreamingChatHelper streamingHelper,
                          ConversationWindowManager conversationWindowManager,
@@ -350,6 +366,7 @@ public class ReasoningNode implements NodeAction {
         this.wikiContextService = wikiContextService;
         this.skillCatalogRenderer = skillCatalogRenderer;
         this.progressLedgerService = progressLedgerService;
+        this.promptBudgetManager = null;
     }
 
     /**
@@ -400,6 +417,7 @@ public class ReasoningNode implements NodeAction {
         this.wikiContextService = null;
         this.skillCatalogRenderer = null;
         this.progressLedgerService = null;
+        this.promptBudgetManager = null;
     }
 
     @Override
@@ -458,7 +476,17 @@ public class ReasoningNode implements NodeAction {
         // Appended at runtime rather than woven into the AgentEntity-stored
         // prompt so it stays out of the user-editable agent UI but is still
         // always-on for the runtime LLM.
-        systemPrompt = systemPrompt + TOOL_USE_ENFORCEMENT;
+        // Only append TOOL_USE_ENFORCEMENT when PromptBudgetManager is NOT wired.
+        // When the budget manager is active, it handles this module independently
+        // via the TOOL_ENFORCEMENT PromptModule — allowing users to toggle it.
+        String agentIdForEnforcement = state.value(MateClawStateKeys.AGENT_ID, "");
+        Long enforcementAgentId = null;
+        try { enforcementAgentId = Long.parseLong(agentIdForEnforcement); } catch (Exception ignored) {}
+        boolean enforcementViaBudget = promptBudgetManager != null
+                && promptBudgetManager.isEnabled(PromptModule.TOOL_ENFORCEMENT, enforcementAgentId);
+        if (!enforcementViaBudget) {
+            systemPrompt = systemPrompt + TOOL_USE_ENFORCEMENT;
+        }
         List<Message> messages = accessor.messages();
 
         // Per-loop budget: bound the working message list a single Reasoning
@@ -525,9 +553,15 @@ public class ReasoningNode implements NodeAction {
         // re-rendering each turn lets skills loaded this run (load_skill) pin
         // to the top of the catalog. Reused verbatim by the PTL retry branch.
         if (skillCatalogRenderer != null) {
-            String skillCatalog = skillCatalogRenderer.render(accessor.loadedSkills());
-            if (skillCatalog != null && !skillCatalog.isBlank()) {
-                nonHistoryPrefix.add(1, new SystemMessage(skillCatalog));
+            Long agentIdForBudget = null;
+            try { agentIdForBudget = Long.parseLong(agentIdStr); } catch (Exception ignored) {}
+            boolean catalogEnabled = promptBudgetManager == null
+                    || promptBudgetManager.isEnabled(PromptModule.SKILL_CATALOG, agentIdForBudget);
+            if (catalogEnabled) {
+                String skillCatalog = skillCatalogRenderer.render(accessor.loadedSkills());
+                if (skillCatalog != null && !skillCatalog.isBlank()) {
+                    nonHistoryPrefix.add(1, new SystemMessage(skillCatalog));
+                }
             }
         }
 
@@ -545,7 +579,11 @@ public class ReasoningNode implements NodeAction {
         // ledger discipline before it drifts into the "I'm doing the work
         // but never marking it" failure mode observed in round-4 of the
         // LLM-review smoke test.
-        if (progressLedgerService != null && conversationId != null && !conversationId.isBlank()) {
+        Long agentIdForLedger = null;
+        try { agentIdForLedger = Long.parseLong(agentIdStr); } catch (Exception ignored) {}
+        boolean ledgerEnabled = promptBudgetManager == null
+                || promptBudgetManager.isEnabled(PromptModule.PROGRESS_LEDGER, agentIdForLedger);
+        if (ledgerEnabled && progressLedgerService != null && conversationId != null && !conversationId.isBlank()) {
             try {
                 vip.mate.agent.progress.ProgressLedger ledger =
                         progressLedgerService.load(conversationId);
@@ -968,14 +1006,16 @@ public class ReasoningNode implements NodeAction {
                                         String agentIdStr,
                                         String userMsg,
                                         vip.mate.agent.context.ChatOrigin chatOrigin) {
+        // When PromptBudgetManager is wired, delegate to the budget-aware path.
+        if (promptBudgetManager != null) {
+            return buildNonHistoryPrefixBudgeted(systemPrompt, workspaceBasePath,
+                    agentIdStr, userMsg, chatOrigin);
+        }
+
+        // Legacy path: hardcoded assembly (unchanged behavior).
         List<Message> prefix = new ArrayList<>();
         prefix.add(new SystemMessage(systemPrompt));
         prefix.add(new UserMessage(RuntimeContextInjector.buildContextMessage(workspaceBasePath, null, chatOrigin)));
-        // When this turn already recalled the user's own current project from
-        // structured memory, skip auto-injecting knowledge-base reference context.
-        // Otherwise the KB pages (reference material, possibly about unrelated
-        // projects) compete with — and tend to override — the user's actual
-        // project identity. The agent can still query the wiki on demand.
         boolean projectRecalled = userMsg != null
                 && userMsg.contains(vip.mate.memory.service.StructuredMemoryService.PROJECT_RECALLED_MARKER);
         if (projectRecalled) {
@@ -989,9 +1029,83 @@ public class ReasoningNode implements NodeAction {
                     prefix.add(new UserMessage(wikiRelevant));
                 }
             } catch (NumberFormatException ignored) {
-                // agentId not numeric — skip wiki injection (matches prior behavior).
             }
         }
+        return prefix;
+    }
+
+    /**
+     * Budget-aware prompt assembly path. Collects prompt modules as
+     * {@link PromptSegment}s and delegates to {@link PromptBudgetManager}
+     * for budget-aware assembly with optional truncation.
+     */
+    private List<Message> buildNonHistoryPrefixBudgeted(String systemPrompt,
+                                                         String workspaceBasePath,
+                                                         String agentIdStr,
+                                                         String userMsg,
+                                                         vip.mate.agent.context.ChatOrigin chatOrigin) {
+        Long agentId = null;
+        if (agentIdStr != null && !agentIdStr.isEmpty()) {
+            try {
+                agentId = Long.parseLong(agentIdStr);
+            } catch (NumberFormatException ignored) {
+            }
+        }
+
+        // Collect prompt segments
+        List<PromptSegment> segments = new ArrayList<>();
+
+        // M1: Agent System Prompt
+        segments.add(PromptSegment.of(PromptModule.AGENT_SYSTEM_PROMPT, systemPrompt));
+
+        // M4: Tool Use Enforcement
+        if (promptBudgetManager.isEnabled(PromptModule.TOOL_ENFORCEMENT, agentId)) {
+            segments.add(PromptSegment.of(PromptModule.TOOL_ENFORCEMENT, TOOL_USE_ENFORCEMENT));
+        }
+
+        // M5: Runtime Context
+        if (promptBudgetManager.isEnabled(PromptModule.RUNTIME_CONTEXT, agentId)) {
+            String runtimeCtx = RuntimeContextInjector.buildContextMessage(workspaceBasePath, null, chatOrigin);
+            segments.add(PromptSegment.of(PromptModule.RUNTIME_CONTEXT, runtimeCtx));
+        }
+
+        // M3: Wiki Context
+        boolean projectRecalled = userMsg != null
+                && userMsg.contains(vip.mate.memory.service.StructuredMemoryService.PROJECT_RECALLED_MARKER);
+        if (!projectRecalled && promptBudgetManager.isEnabled(PromptModule.WIKI_CONTEXT, agentId)
+                && wikiContextService != null && agentIdStr != null && !agentIdStr.isEmpty()) {
+            try {
+                Long parsedAgentId = Long.parseLong(agentIdStr);
+                String wikiRelevant = wikiContextService.buildRelevantContext(parsedAgentId, userMsg);
+                if (wikiRelevant != null && !wikiRelevant.isBlank()) {
+                    segments.add(PromptSegment.of(PromptModule.WIKI_CONTEXT, wikiRelevant));
+                }
+            } catch (NumberFormatException ignored) {
+            }
+        }
+
+        // Assemble with budget
+        int contextWindow = loopContextWindowTokens();
+        PromptBudgetManager.AssembledPrompt assembled =
+                promptBudgetManager.assemble(segments, contextWindow, agentId);
+
+        // Convert segments back to Message list
+        List<Message> prefix = new ArrayList<>();
+        for (PromptSegment seg : assembled.segments()) {
+            if (seg.assembledContent().isEmpty()) continue;
+            if (seg.module() == PromptModule.AGENT_SYSTEM_PROMPT) {
+                prefix.add(new SystemMessage(seg.assembledContent()));
+            } else {
+                prefix.add(new UserMessage(seg.assembledContent()));
+            }
+        }
+
+        if (assembled.totalTokens() > 0) {
+            log.debug("[ReasoningNode] Budgeted prompt: {} tokens / {} ({}%)",
+                    assembled.totalTokens(), contextWindow,
+                    Math.round(assembled.utilization() * 1000) / 10.0);
+        }
+
         return prefix;
     }
 
