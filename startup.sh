@@ -72,7 +72,7 @@ stop_backend() {
 	PID=$(lsof -ti :$PORT)
 	if [ -n "$PID" ]; then
 		log_info "正在终止端口 $PORT 上的进程 (PID: $PID)..."
-		kill $PID
+		kill -9 $PID
 		log_info "后端服务已停止。"
 	else
 		echo "未找到监听端口 $PORT 的进程"
